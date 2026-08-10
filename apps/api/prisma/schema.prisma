@@ -1,0 +1,3501 @@
+// University ePortal — Prisma schema (whole system)
+// Source of truth for TABLES. Triggers, RLS, role grants and a few
+// partial/functional indexes that Prisma cannot express live in
+// prisma/guards.sql and are applied after migrate (see README / docs 28).
+//
+// The schema covers every bounded context in docs/02-ARCHITECTURE.md §2.1:
+//   identity & access · organisation · student-records · admission ·
+//   curriculum · registration · finance · assessment · examination ·
+//   clearance · graduation · credentials, plus the cross-cutting audit,
+//   notification and document-storage tables.
+// Tables exist ahead of the services that drive them ON PURPOSE: the data model
+// is the part that is expensive to change once there is production data, and the
+// invariants in §2.2 are structural (unique/partial indexes, supersede chains,
+// append-only ledgers) rather than something a later service can retrofit.
+//
+// Identity invariant (INV-3): protected columns on student_record cannot be
+// mutated except inside an approved amendment. Enforced at four layers:
+//   L1 schema (this file + guards.sql grants), L2 database (guard trigger),
+//   L3 service (no student-facing method accepts protected fields),
+//   L4 API (student DTOs cannot express protected fields).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+//  Enums (stable domain vocabulary). Configurable catalogs (student status)
+//  live in tables instead — see StudentStatus.
+// ---------------------------------------------------------------------------
+
+enum UserType {
+  STAFF
+  STUDENT
+}
+
+enum ScopeType {
+  GLOBAL
+  FACULTY
+  DEPARTMENT
+  PROGRAMME
+}
+
+enum EntryMode {
+  UTME
+  DIRECT_ENTRY
+  TRANSFER
+  INTER_UNIVERSITY
+  JUPEB
+}
+
+enum StudyMode {
+  FULL_TIME
+  PART_TIME
+  SANDWICH
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNSPECIFIED
+}
+
+enum ActivationState {
+  PENDING
+  ACTIVATED
+  LOCKED
+}
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// -- Phase 2: academic-structure vocabulary --------------------------------
+
+/// Lifecycle of a course offering. Phase 2 is DEFINITION-ONLY: DRAFT/OPEN/CLOSED
+/// are metadata for a later registration module; no behaviour hangs off them yet.
+enum OfferingStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+/// A curriculum version is editable while DRAFT, frozen once PUBLISHED (a change
+/// then requires a NEW version, preserving the cohort's approved structure),
+/// and ARCHIVED when superseded.
+enum CurriculumStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Whether a curriculum entry is required or chosen. Kept on the requirement
+/// (the programme decides), not on the course (which is programme-agnostic).
+enum RequirementType {
+  COMPULSORY
+  ELECTIVE
+}
+
+/// Non-prerequisite relationships between courses (advisory catalogue metadata).
+enum CourseRelationType {
+  EQUIVALENT
+  EXCLUSION
+  RECOMMENDED
+  ANTIREQUISITE
+}
+
+// -- Whole-system vocabulary -----------------------------------------------
+//  Only genuinely FIXED vocabularies are enums. Anything an institution varies
+//  (statuses, categories, clearance units, grading, approval chains, fee items,
+//  progression thresholds) is a TABLE — see docs/02 §2.3 "configuration, not
+//  code". A new value here is a migration; a new row there is a config change.
+
+/// Session lifecycle (docs/03 §8.2). Exactly one ACTIVE at a time (partial
+/// unique index in guards.sql), but RESULTS_PROCESSING deliberately overlaps a
+/// newly-ACTIVE session — that is what really happens at a term boundary.
+enum SessionState {
+  PLANNED
+  ACTIVE
+  TEACHING_COMPLETE
+  RESULTS_PROCESSING
+  CLOSED
+  ARCHIVED
+}
+
+/// The academic calendar is the system clock (docs/03 §8.1): one predicate,
+/// isWindowOpen(windowType, scope, at), rather than dates scattered per module.
+enum WindowType {
+  REGISTRATION
+  ADD_DROP
+  LATE_REGISTRATION
+  SCORE_ENTRY
+  RESULT_RELEASE
+  EXAM
+  CLEARANCE
+  TRANSCRIPT_REQUEST
+}
+
+/// Generic dual-control lifecycle for request/approve records (waivers, loan
+/// clearances, exceptions, amendments). Distinct from ChangeRequestStatus so the
+/// student-facing flow can evolve independently of the financial ones.
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+/// Which pipeline an ApprovalStage belongs to. Registration (docs/03 §9.6) and
+/// results (docs/03 §10.4) are both configurable N-stage chains, so they share
+/// one stage-definition table keyed by domain instead of duplicating it.
+enum ApprovalDomain {
+  REGISTRATION
+  RESULT
+}
+
+// -- admission -------------------------------------------------------------
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  OFFERED
+  ACCEPTED
+  DECLINED
+  REJECTED
+  WITHDRAWN
+  ENROLLED
+}
+
+enum OfferStatus {
+  ISSUED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  REVOKED
+}
+
+/// Bulk import is a staged, reversible, dual-controlled operation (docs/02
+/// §7.3): upload → validate → dry-run diff → approve → commit, never a
+/// straight-to-production write.
+enum ImportBatchStatus {
+  UPLOADED
+  VALIDATED
+  DRY_RUN
+  AWAITING_APPROVAL
+  COMMITTED
+  REJECTED
+  REVERSED
+}
+
+/// How a master record came into existence. There are only two legitimate doors
+/// (docs/02 §7.2) plus historical migration; a student is never one of them.
+enum RecordOrigin {
+  ADMISSION
+  IMPORT
+  MIGRATION
+}
+
+// -- registration ----------------------------------------------------------
+
+enum RegistrationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  LOCKED
+  REJECTED
+  CANCELLED
+}
+
+enum RegistrationLineType {
+  NEW
+  CARRYOVER
+  REPEAT
+  ELECTIVE
+  AUDIT
+}
+
+enum RegistrationLineState {
+  ACTIVE
+  DROPPED
+}
+
+/// Documented real-world exceptions (docs/03 §9.7) rather than ad-hoc admin
+/// overrides: each one is a request with evidence, a validator and an approver.
+enum RegistrationExceptionType {
+  LATE_REGISTRATION
+  ADD_DROP
+  UNIT_OVERRIDE
+  PREREQUISITE_OVERRIDE
+  CARRYOVER_REMOVAL
+  WINDOW_REOPEN
+}
+
+// -- assessment ------------------------------------------------------------
+
+/// Score entry is a draft until explicitly submitted (docs/03 §10.2) —
+/// autosaved work must never look like a submitted result.
+enum ScoreEntryState {
+  DRAFT
+  SUBMITTED
+}
+
+/// A blank is never silently a zero. An unscored line carries an explicit
+/// reason, which is also what the transcript renders.
+enum ScoreMark {
+  SCORED
+  ABSENT
+  WITHHELD
+  MEDICAL
+  MALPRACTICE
+}
+
+enum ResultBatchStatus {
+  DRAFT
+  PENDING_APPROVAL
+  SENATE_RATIFIED
+  PUBLISHED
+  REJECTED
+}
+
+enum WithholdingStatus {
+  ACTIVE
+  RELEASED
+}
+
+enum ProgressionOutcome {
+  PROMOTE
+  REPEAT
+  PROBATION
+  WITHDRAW
+  SPILL_OVER
+  GRADUATE_PENDING
+}
+
+/// Progression is a PROPOSAL engine, never a silent writer (docs/03 §8.3): an
+/// automated withdrawal off a mis-keyed score is catastrophic to unwind.
+enum ProposalStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+// -- finance ---------------------------------------------------------------
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+  VOID
+}
+
+/// UNDERPAID and OVERPAID are first-class, not edge cases: R8 records that
+/// amount mismatches stall real transactions, and ABANDONED exists because a
+/// generated-but-unpaid RRR sits Pending indefinitely (docs/03 §11.3).
+enum PaymentIntentStatus {
+  CREATED
+  PENDING
+  PAID
+  POSTED_TO_LEDGER
+  UNDERPAID
+  OVERPAID
+  FAILED
+  ABANDONED
+  REVERSED
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+enum LedgerSource {
+  INVOICE
+  PAYMENT
+  WAIVER
+  LOAN
+  REVERSAL
+  ADJUSTMENT
+}
+
+// -- examination -----------------------------------------------------------
+
+enum ExamAttendanceStatus {
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
+/// Biometric verification is an accelerator with a MANDATORY manual fallback
+/// (docs/03 §12.4): a 5-10% failure rate against a 500-seat hall would bar
+/// hundreds of students from an exam they are entitled to sit.
+enum IdentityVerificationMethod {
+  MANUAL
+  BIOMETRIC
+  CARD
+}
+
+enum MisconductStatus {
+  REPORTED
+  UNDER_REVIEW
+  UPHELD
+  DISMISSED
+  APPEALED
+}
+
+// -- clearance & graduation ------------------------------------------------
+
+enum ClearanceType {
+  GRADUATION
+  WITHDRAWAL
+  TRANSFER
+}
+
+enum ClearanceStepStatus {
+  PENDING
+  CLEARED
+  BLOCKED
+  WAIVED
+}
+
+enum GraduationCandidateStatus {
+  EVALUATED
+  PENDING_CLEARANCE
+  RECOMMENDED
+  APPROVED
+  DEFERRED
+  EXCLUDED
+}
+
+// -- credentials -----------------------------------------------------------
+
+/// R7 distinguishes these sharply and conflating them causes real harm — a
+/// Directorate transcript is NOT accepted for formal verification, and only the
+/// Senate-authenticated one works for NYSC and foreign study (docs/03 §13.1).
+enum DocumentType {
+  STATEMENT_OF_RESULT
+  PROVISIONAL_TRANSCRIPT
+  FINAL_TRANSCRIPT
+  SENATE_TRANSCRIPT
+  DIRECTORATE_TRANSCRIPT
+  CERTIFICATE
+  EXAM_CARD
+  REGISTRATION_SLIP
+  RESULT_SHEET
+  PAYMENT_RECEIPT
+}
+
+enum DocumentStatus {
+  GENERATING
+  ISSUED
+  SUPERSEDED
+  REVOKED
+}
+
+enum TranscriptRequestStatus {
+  SUBMITTED
+  AWAITING_PAYMENT
+  IN_REVIEW
+  APPROVED
+  GENERATED
+  DISPATCHED
+  REJECTED
+  CANCELLED
+}
+
+// -- cross-cutting: files, notification, audit -----------------------------
+
+/// Storage class drives retention, encryption key and immutability (docs/04
+/// §17.1). Biometrics sit under a separate key so crypto-erasure is possible
+/// without touching academic records.
+enum FileClass {
+  STUDENT_UPLOAD
+  GENERATED_DOCUMENT
+  IMPORT_ARTEFACT
+  AUDIT_ANCHOR
+  BIOMETRIC_TEMPLATE
+}
+
+enum FileScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  FAILED
+  SKIPPED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+}
+
+/// In-app is the reliable baseline and is ALWAYS written; email/SMS are
+/// best-effort enhancements (docs/04 §18.1). A workflow never depends on an
+/// email arriving.
+enum DispatchStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  SUPPRESSED
+}
+
+/// Tier 2 adds a hash chain + external anchoring, and is reserved for identity
+/// mutations, result lifecycle, finance movements, permission grants and Senate
+/// approvals (docs/04 §19.1). Hash-chaining everything would waste throughput
+/// and obscure what matters.
+enum AuditTier {
+  STANDARD
+  TAMPER_EVIDENT
+}
+
+// ---------------------------------------------------------------------------
+//  IDENTITY & ACCESS  (User is a login principal; never a student record)
+// ---------------------------------------------------------------------------
+
+/// A login principal. STAFF or STUDENT. A STUDENT user is linked 1:1 to exactly
+/// one StudentRecord via studentRecordId (set only at activation). Creating a
+/// User never creates a StudentRecord and vice-versa (INV-1).
+model User {
+  id                 String         @id @default(uuid()) @db.Uuid
+  userType           UserType       @map("user_type")
+  email              String         @unique @db.Citext
+  passwordHash       String?        @map("password_hash")
+  fullName           String         @map("full_name")
+  isActive           Boolean        @default(true) @map("is_active")
+  // Force credential rotation (e.g. bootstrap admin after first login).
+  mustChangePassword Boolean        @default(false) @map("must_change_password")
+  lastLoginAt        DateTime?      @map("last_login_at")
+  // Optional 1:1 link to the official student record. Unique => one account
+  // per record. NULL for all staff and for un-activated students.
+  studentRecordId    String?        @unique @map("student_record_id") @db.Uuid
+  studentRecord      StudentRecord? @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdById String?  @map("created_by") @db.Uuid
+
+  roleAssignments   RoleAssignment[]   @relation("UserRoleAssignments")
+  grantedRoles      RoleAssignment[]   @relation("RoleAssignmentGrantedBy")
+  refreshTokens     RefreshToken[]
+  passwordResets    PasswordReset[]
+  mfaFactors        MfaFactor[]
+  // Teaching load: a lecturer may only enter scores for offerings allocated to
+  // them (docs/03 §10.2), so this relation is an authorization input.
+  courseAllocations CourseAllocation[]
+  invigilations     ExamInvigilator[]
+  notifications     Notification[]
+
+  @@index([userType])
+  @@index([isActive])
+  @@map("users")
+}
+
+/// A second authentication factor. MFA is MANDATORY for approver roles (docs/04
+/// §20.3), so this is enrolment state, not a user preference. Only a hashed
+/// secret is stored, and recovery codes are single-use hashes in their own table.
+model MfaFactor {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // TOTP is the only factor in scope; kept as text so WEBAUTHN can be added
+  // without a migration on an enum used in a unique index.
+  factorType  String    @default("TOTP") @map("factor_type")
+  label       String?
+  secretHash  String    @map("secret_hash")
+  confirmedAt DateTime? @map("confirmed_at")
+  lastUsedAt  DateTime? @map("last_used_at")
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  recoveryCodes MfaRecoveryCode[]
+
+  @@index([userId])
+  @@map("mfa_factors")
+}
+
+model MfaRecoveryCode {
+  id       String    @id @default(uuid()) @db.Uuid
+  factorId String    @map("factor_id") @db.Uuid
+  factor   MfaFactor @relation(fields: [factorId], references: [id], onDelete: Cascade)
+  codeHash String    @unique @map("code_hash")
+  usedAt   DateTime? @map("used_at")
+
+  @@index([factorId])
+  @@map("mfa_recovery_codes")
+}
+
+/// Server-side handle for a refresh token. Only a SHA-256 hash of the token is
+/// stored; the raw token lives only in the client's httpOnly cookie. Logout
+/// and password change revoke by setting revokedAt (INV: logout invalidation).
+model RefreshToken {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String    @unique @map("token_hash")
+  issuedAt     DateTime  @default(now()) @map("issued_at")
+  expiresAt    DateTime  @map("expires_at")
+  revokedAt    DateTime? @map("revoked_at")
+  // Rotation chain: the token that replaced this one (reuse detection).
+  replacedById String?   @map("replaced_by") @db.Uuid
+  userAgent    String?   @map("user_agent")
+  ip           String?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+/// One-time password-reset handle. Token is stored hashed; single-use.
+model PasswordReset {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("password_resets")
+}
+
+// ---------------------------------------------------------------------------
+//  RBAC  (Permission catalog, Roles, Role→Permission, scoped User→Role)
+// ---------------------------------------------------------------------------
+
+/// Atomic capability, e.g. "students.create". Seeded catalog; not user-created.
+model Permission {
+  id              String           @id @default(uuid()) @db.Uuid
+  key             String           @unique // e.g. students.import
+  description     String
+  category        String // grouping for admin UI, e.g. "students"
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+/// A named bundle of permissions. System roles cannot be deleted/renamed.
+model Role {
+  id          String    @id @default(uuid()) @db.Uuid
+  key         String    @unique // e.g. REGISTRY_OFFICER
+  name        String
+  description String
+  isSystem    Boolean   @default(false) @map("is_system")
+  // A role may only be assigned within scopes of this type or narrower.
+  scopeKind   ScopeType @default(GLOBAL) @map("scope_kind")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  rolePermissions RolePermission[]
+  assignments     RoleAssignment[]
+  approvalStages  ApprovalStage[]
+  clearanceUnits  ClearanceUnit[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId       String     @map("role_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+/// (user, role, scope) triple — the ABAC part. Scope is NEVER encoded in role
+/// names (avoids role explosion). GLOBAL scope leaves scope*Id null.
+model RoleAssignment {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation("UserRoleAssignments", fields: [userId], references: [id], onDelete: Cascade)
+  roleId String @map("role_id") @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  scopeType    ScopeType @default(GLOBAL) @map("scope_type")
+  facultyId    String?   @map("faculty_id") @db.Uuid
+  departmentId String?   @map("department_id") @db.Uuid
+  programmeId  String?   @map("programme_id") @db.Uuid
+
+  faculty    Faculty?    @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  programme  Programme?  @relation(fields: [programmeId], references: [id], onDelete: Cascade)
+
+  grantedById String?  @map("granted_by") @db.Uuid
+  grantedBy   User?    @relation("RoleAssignmentGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // A user cannot hold the same role twice within the exact same scope.
+  @@unique([userId, roleId, scopeType, facultyId, departmentId, programmeId], name: "uq_assignment_scope")
+  @@index([userId])
+  @@index([roleId])
+  @@map("role_assignments")
+}
+
+// ---------------------------------------------------------------------------
+//  UNIVERSITY STRUCTURE  (University → Faculty → Department → Programme)
+//  Campuses hang off the university. Served from DB, never hardcoded.
+// ---------------------------------------------------------------------------
+
+model University {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  shortName String   @map("short_name")
+  code      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  campuses  Campus[]
+  faculties Faculty[]
+
+  @@map("universities")
+}
+
+model Campus {
+  id           String     @id @default(uuid()) @db.Uuid
+  universityId String     @map("university_id") @db.Uuid
+  university   University @relation(fields: [universityId], references: [id], onDelete: Restrict)
+  name         String
+  code         String
+  isActive     Boolean    @default(true) @map("is_active")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  examVenues ExamVenue[]
+
+  @@unique([universityId, code])
+  @@map("campuses")
+}
+
+model Faculty {
+  id           String     @id @default(uuid()) @db.Uuid
+  universityId String     @map("university_id") @db.Uuid
+  university   University @relation(fields: [universityId], references: [id], onDelete: Restrict)
+  name         String
+  code         String
+  isActive     Boolean    @default(true) @map("is_active")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  departments     Department[]
+  studentRecords  StudentRecord[]
+  roleAssignments RoleAssignment[]
+  calendarWindows CalendarWindow[]
+
+  @@unique([universityId, code])
+  @@index([universityId])
+  @@map("faculties")
+}
+
+model Department {
+  id        String   @id @default(uuid()) @db.Uuid
+  facultyId String   @map("faculty_id") @db.Uuid
+  faculty   Faculty  @relation(fields: [facultyId], references: [id], onDelete: Restrict)
+  name      String
+  code      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  programmes      Programme[]
+  studentRecords  StudentRecord[]
+  roleAssignments RoleAssignment[]
+  courses         Course[]
+  offerings       CourseOffering[]
+  calendarWindows CalendarWindow[]
+  graduationLists GraduationList[]
+
+  @@unique([facultyId, code])
+  @@index([facultyId])
+  @@map("departments")
+}
+
+model Programme {
+  id            String     @id @default(uuid()) @db.Uuid
+  departmentId  String     @map("department_id") @db.Uuid
+  department    Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  name          String
+  code          String
+  // Award, e.g. "B.Sc.". Standard duration in years drives max-duration checks.
+  award         String
+  durationYears Int        @map("duration_years")
+  studyMode     StudyMode  @default(FULL_TIME) @map("study_mode")
+  isActive      Boolean    @default(true) @map("is_active")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  studentRecords     StudentRecord[]
+  roleAssignments    RoleAssignment[]
+  curriculumVersions CurriculumVersion[]
+  calendarWindows    CalendarWindow[]
+  feeSchedules       FeeSchedule[]
+  progressionRules   ProgressionRule[]
+  applications       Application[]
+  admissionOffers    AdmissionOffer[]
+  importBatches      ImportBatch[]
+
+  @@unique([departmentId, code])
+  @@index([departmentId])
+  @@map("programmes")
+}
+
+/// Admission/academic session, e.g. "2024/2025". `isCurrent` marks the default
+/// admission session; `state` drives the lifecycle in docs/03 §8.2. Exactly one
+/// session is current AND exactly one is ACTIVE — two separate partial unique
+/// indexes in guards.sql, because a session can be current for admissions while
+/// a previous one is still RESULTS_PROCESSING.
+model AcademicSession {
+  id        String       @id @default(uuid()) @db.Uuid
+  name      String       @unique // "2024/2025"
+  startDate DateTime     @map("start_date") @db.Date
+  endDate   DateTime     @map("end_date") @db.Date
+  isCurrent Boolean      @default(false) @map("is_current")
+  state     SessionState @default(PLANNED)
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  admittedStudents       StudentRecord[]         @relation("StudentAdmissionSession")
+  expectedGraduates      StudentRecord[]         @relation("StudentExpectedGraduationSession")
+  semesters              Semester[]
+  curriculumVersions     CurriculumVersion[]
+  offerings              CourseOffering[]
+  calendarWindows        CalendarWindow[]
+  statusHistory          StudentStatusHistory[]
+  levelHistory           StudentLevelHistory[]
+  applications           Application[]
+  admissionOffers        AdmissionOffer[]
+  registrations          Registration[]
+  registrationExceptions RegistrationException[]
+  feeSchedules           FeeSchedule[]
+  invoices               Invoice[]
+  ledgerEntries          LedgerEntry[]
+  waivers                Waiver[]
+  loanClearances         LoanClearance[]
+  resultBatches          ResultBatch[]
+  gradeRecords           GradeRecord[]
+  semesterGpas           SemesterGpa[]
+  resultWithholdings     ResultWithholding[]
+  progressionProposals   ProgressionProposal[]
+  examPeriods            ExamPeriod[]
+  clearanceRequests      ClearanceRequest[]
+  graduationCandidates   GraduationCandidate[]
+  senateApprovals        SenateApproval[]
+  graduationLists        GraduationList[]
+  exportBatches          ExportBatch[]
+  importBatches          ImportBatch[]
+
+  @@index([state])
+  @@map("academic_sessions")
+}
+
+/// Configurable lifecycle status for a student (INV: statuses are data, not
+/// hardcoded branches). isTerminal marks Graduated/Expelled/Withdrawn;
+/// allowsLogin gates whether an activated account may authenticate.
+model StudentStatus {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique // ACTIVE, DEFERRED, SUSPENDED, ...
+  label       String
+  description String?
+  isTerminal  Boolean @default(false) @map("is_terminal")
+  allowsLogin Boolean @default(true) @map("allows_login")
+  sortOrder   Int     @default(0) @map("sort_order")
+
+  studentRecords StudentRecord[]
+  historyFrom    StudentStatusHistory[]    @relation("StatusHistoryFrom")
+  historyTo      StudentStatusHistory[]    @relation("StatusHistoryTo")
+  allowedFrom    StudentStatusTransition[] @relation("TransitionFrom")
+  allowedTo      StudentStatusTransition[] @relation("TransitionTo")
+
+  @@map("student_statuses")
+}
+
+/// The status state machine as DATA (docs/02 §7.5). A transition that has no row
+/// here is not merely discouraged — it is unrepresentable, so the set of legal
+/// moves can be tuned per institution without touching code. `requiresApproval`
+/// marks the adverse transitions a human must ratify.
+model StudentStatusTransition {
+  id                 String        @id @default(uuid()) @db.Uuid
+  fromStatusId       String        @map("from_status_id") @db.Uuid
+  fromStatus         StudentStatus @relation("TransitionFrom", fields: [fromStatusId], references: [id], onDelete: Cascade)
+  toStatusId         String        @map("to_status_id") @db.Uuid
+  toStatus           StudentStatus @relation("TransitionTo", fields: [toStatusId], references: [id], onDelete: Cascade)
+  // The permission an actor must hold to perform this transition.
+  requiredPermission String?       @map("required_permission")
+  requiresApproval   Boolean       @default(false) @map("requires_approval")
+  isAppealable       Boolean       @default(false) @map("is_appealable")
+  createdAt          DateTime      @default(now()) @map("created_at")
+
+  @@unique([fromStatusId, toStatusId])
+  @@map("student_status_transitions")
+}
+
+// ---------------------------------------------------------------------------
+//  OFFICIAL STUDENT MASTER RECORD  (the university is the source of truth)
+//
+//  PROTECTED (Class P) columns — matriculationNumber, jambRegistrationNumber,
+//  surname, firstName, dateOfBirth, gender, facultyId, departmentId,
+//  programmeId, admissionSessionId, entryMode, currentLevel, studentStatusId,
+//  studentId, curriculumVersionId — may be changed ONLY inside an approved
+//  amendment. The guard_student_record() BEFORE UPDATE trigger (guards.sql)
+//  rejects any other mutation, and the app DB role is granted UPDATE on
+//  non-protected columns only. Student-editable contact data lives in
+//  StudentProfile, NOT here.
+// ---------------------------------------------------------------------------
+
+model StudentRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  // -- Identity (PROTECTED) --------------------------------------------------
+  studentId              String   @unique @map("student_id") // internal, system-generated
+  matriculationNumber    String   @unique @map("matriculation_number") // system-assigned, never student-chosen
+  jambRegistrationNumber String?  @map("jamb_registration_number") // admission linkage
+  surname                String
+  firstName              String   @map("first_name")
+  otherNames             String?  @map("other_names")
+  dateOfBirth            DateTime @map("date_of_birth") @db.Date
+  gender                 Gender   @default(UNSPECIFIED)
+
+  // -- Academic identity (PROTECTED) ----------------------------------------
+  facultyId          String          @map("faculty_id") @db.Uuid
+  faculty            Faculty         @relation(fields: [facultyId], references: [id], onDelete: Restrict)
+  departmentId       String          @map("department_id") @db.Uuid
+  department         Department      @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  programmeId        String          @map("programme_id") @db.Uuid
+  programme          Programme       @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  admissionSessionId String          @map("admission_session_id") @db.Uuid
+  admissionSession   AcademicSession @relation("StudentAdmissionSession", fields: [admissionSessionId], references: [id], onDelete: Restrict)
+  entryMode          EntryMode       @default(UTME) @map("entry_mode")
+  currentLevel       Int             @map("current_level") // 100, 200, ...
+
+  // PROTECTED, pinned at admission (INV-7, docs/03 §8.5). A student is assessed
+  // against the curriculum of their ADMISSION COHORT, not the current one — so
+  // this must not drift when the department revises its curriculum. Nullable
+  // because records migrated/imported before their cohort's curriculum was
+  // captured have nothing to pin to yet; graduation evaluation refuses to run
+  // without it rather than silently falling back to the newest version.
+  curriculumVersionId String?            @map("curriculum_version_id") @db.Uuid
+  curriculumVersion   CurriculumVersion? @relation(fields: [curriculumVersionId], references: [id], onDelete: Restrict)
+
+  studentStatusId String        @map("student_status_id") @db.Uuid
+  studentStatus   StudentStatus @relation(fields: [studentStatusId], references: [id], onDelete: Restrict)
+
+  // -- Contact of record (NOT identity) -------------------------------------
+  // Captured at admission/import. Used ONLY as the verified OTP delivery channel
+  // during activation and as the login email of the account that gets created.
+  // Never student-supplied; correctable by admins WITHOUT an amendment (these
+  // are excluded from the protected-field trigger), so the app role is granted
+  // UPDATE on them (see guards.sql).
+  officialEmail String? @map("official_email") @db.Citext
+  officialPhone String? @map("official_phone")
+
+  // -- Operational, admin-editable (Class A) --------------------------------
+  // Fee band / differential-fee bucket (docs/03 §11.2, Q-36). Not identity: an
+  // administrator recategorises a student without an amendment.
+  studentCategoryId String?          @map("student_category_id") @db.Uuid
+  studentCategory   StudentCategory? @relation(fields: [studentCategoryId], references: [id], onDelete: SetNull)
+
+  // -- Derived (Class D) -----------------------------------------------------
+  // NUC allows standard duration + 50% (docs/03 §8.4). Computed at admission
+  // from the programme duration, recomputable, so it is NOT in the protected
+  // tuple — a wrong value is a recomputation, not an identity dispute.
+  expectedGraduationSessionId String?          @map("expected_graduation_session_id") @db.Uuid
+  expectedGraduationSession   AcademicSession? @relation("StudentExpectedGraduationSession", fields: [expectedGraduationSessionId], references: [id], onDelete: SetNull)
+
+  // -- Activation lifecycle --------------------------------------------------
+  activationState ActivationState @default(PENDING) @map("activation_state")
+  photoKey        String?         @map("photo_key") // object-storage key; nullable
+
+  // -- Provenance ------------------------------------------------------------
+  // Which of the two legitimate doors created this record (docs/02 §7.2).
+  origin RecordOrigin @default(IMPORT)
+
+  // -- System info -----------------------------------------------------------
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdById String?  @map("created_by") @db.Uuid
+  updatedById String?  @map("updated_by") @db.Uuid
+
+  // -- Relations -------------------------------------------------------------
+  userAccount    User?
+  profile        StudentProfile?
+  activation     StudentActivation?
+  changeRequests ProfileChangeRequest[]
+
+  statusHistory          StudentStatusHistory[]
+  levelHistory           StudentLevelHistory[]
+  amendments             RecordAmendment[]
+  holds                  StudentHold[]
+  admissionOffer         AdmissionOffer?
+  registrations          Registration[]
+  registrationExceptions RegistrationException[]
+  invoices               Invoice[]
+  paymentIntents         PaymentIntent[]
+  ledgerEntries          LedgerEntry[]
+  waivers                Waiver[]
+  loanClearances         LoanClearance[]
+  gradeRecords           GradeRecord[]
+  semesterGpas           SemesterGpa[]
+  resultWithholdings     ResultWithholding[]
+  progressionProposals   ProgressionProposal[]
+  examCards              ExamCard[]
+  misconductCases        MisconductCase[]
+  clearanceRequests      ClearanceRequest[]
+  graduationCandidates   GraduationCandidate[]
+  transcriptRequests     TranscriptRequest[]
+  generatedDocuments     GeneratedDocument[]
+  certificates           CertificateIssuance[]
+  exportItems            ExportBatchItem[]
+  notifications          Notification[]
+  importRows             ImportBatchRow[]
+
+  @@index([facultyId])
+  @@index([departmentId])
+  @@index([programmeId])
+  @@index([admissionSessionId])
+  @@index([studentStatusId])
+  @@index([activationState])
+  @@index([surname])
+  @@index([curriculumVersionId])
+  // Departmental nominal-roll / class-list query (docs/02 §3.5).
+  @@index([programmeId, currentLevel, studentStatusId])
+  @@map("student_records")
+}
+
+// ---------------------------------------------------------------------------
+//  STUDENT HISTORY  (history is truth; the record's current values are a cached
+//  projection of it — docs/02 §7.5)
+// ---------------------------------------------------------------------------
+
+/// Every status transition, append-only in practice. The status machine's legal
+/// moves live in StudentStatusTransition; this is what actually happened.
+model StudentStatusHistory {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+
+  fromStatusId String?        @map("from_status_id") @db.Uuid
+  fromStatus   StudentStatus? @relation("StatusHistoryFrom", fields: [fromStatusId], references: [id], onDelete: Restrict)
+  toStatusId   String         @map("to_status_id") @db.Uuid
+  toStatus     StudentStatus  @relation("StatusHistoryTo", fields: [toStatusId], references: [id], onDelete: Restrict)
+
+  sessionId String?          @map("session_id") @db.Uuid
+  session   AcademicSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  reason      String
+  // Set when the transition came from an approved progression proposal.
+  proposalId  String?  @map("proposal_id") @db.Uuid
+  changedById String?  @map("changed_by") @db.Uuid
+  changedAt   DateTime @default(now()) @map("changed_at")
+
+  @@index([studentRecordId, changedAt])
+  @@index([toStatusId])
+  @@map("student_status_history")
+}
+
+/// Level progression history — one row per promotion/repeat, so "what level was
+/// this student in during 2023/2024" is answerable years later.
+model StudentLevelHistory {
+  id              String          @id @default(uuid()) @db.Uuid
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  fromLevel       Int?            @map("from_level")
+  toLevel         Int             @map("to_level")
+  sessionId       String          @map("session_id") @db.Uuid
+  session         AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  reason          String
+  changedById     String?         @map("changed_by") @db.Uuid
+  changedAt       DateTime        @default(now()) @map("changed_at")
+
+  @@index([studentRecordId, changedAt])
+  @@map("student_level_history")
+}
+
+/// A registry-initiated correction to a PROTECTED field (docs/02 §3.1, §7.6).
+/// Distinct from ProfileChangeRequest, which is the student-initiated flow: this
+/// one is raised by staff, carries evidence, and requires a DIFFERENT approver
+/// (chk_record_amendment_sod in guards.sql). Applying it is the only path that
+/// sets `eportal.amendment_id`, which is what unlocks the guard trigger.
+model RecordAmendment {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+
+  fieldKey       String  @map("field_key")
+  oldValue       String? @map("old_value")
+  newValue       String? @map("new_value")
+  reason         String
+  // StoredFile id holding the supporting document (affidavit, court order, ...).
+  evidenceFileId String? @map("evidence_file_id") @db.Uuid
+
+  status        ApprovalStatus @default(PENDING)
+  requestedById String         @map("requested_by") @db.Uuid
+  approvedById  String?        @map("approved_by") @db.Uuid
+  decisionNote  String?        @map("decision_note")
+  decidedAt     DateTime?      @map("decided_at")
+  // Set once the change has actually been written to student_records.
+  appliedAt     DateTime?      @map("applied_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([studentRecordId])
+  @@index([status])
+  @@map("record_amendments")
+}
+
+/// A blocking hold (registration GATE 4, exam eligibility). Explicit and
+/// actionable: the student is told which hold and why, never a generic refusal.
+model StudentHold {
+  id                 String        @id @default(uuid()) @db.Uuid
+  studentRecordId    String        @map("student_record_id") @db.Uuid
+  studentRecord      StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  // Configurable vocabulary: DISCIPLINARY, LIBRARY, MEDICAL, DOCUMENTATION, ...
+  holdType           String        @map("hold_type")
+  reason             String
+  blocksRegistration Boolean       @default(true) @map("blocks_registration")
+  blocksExam         Boolean       @default(false) @map("blocks_exam")
+  blocksResults      Boolean       @default(false) @map("blocks_results")
+  blocksGraduation   Boolean       @default(false) @map("blocks_graduation")
+
+  placedById   String?   @map("placed_by") @db.Uuid
+  placedAt     DateTime  @default(now()) @map("placed_at")
+  releasedById String?   @map("released_by") @db.Uuid
+  releasedAt   DateTime? @map("released_at")
+  releaseNote  String?   @map("release_note")
+
+  @@index([studentRecordId])
+  @@index([holdType])
+  @@map("student_holds")
+}
+
+/// Student-editable contact data, separated from the protected master record
+/// so the app DB role can grant UPDATE here freely (Class S). 1:1 with record.
+model StudentProfile {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @unique @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+
+  phone                    String?
+  personalEmail            String? @map("personal_email") @db.Citext
+  addressLine              String? @map("address_line")
+  city                     String?
+  state                    String?
+  country                  String?
+  emergencyContactName     String? @map("emergency_contact_name")
+  emergencyContactPhone    String? @map("emergency_contact_phone")
+  emergencyContactRelation String? @map("emergency_contact_relation")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("student_profiles")
+}
+
+// ---------------------------------------------------------------------------
+//  ACTIVATION  (a student activates a PRE-EXISTING record; never self-creates)
+// ---------------------------------------------------------------------------
+
+/// Tracks a student's attempt to activate their pre-created master record.
+/// One per StudentRecord. Holds a hashed OTP + hashed continuation token and
+/// attempt counters used for lockout. No raw secrets are stored.
+model StudentActivation {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @unique @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+
+  // Step-1 identity challenge counters (matric + DOB + contact match).
+  identifyAttempts Int       @default(0) @map("identify_attempts")
+  lockedUntil      DateTime? @map("locked_until")
+
+  // Step-2 OTP (sent to the contact ON FILE only — never a student-supplied one).
+  otpHash      String?   @map("otp_hash")
+  otpExpiresAt DateTime? @map("otp_expires_at")
+  otpAttempts  Int       @default(0) @map("otp_attempts")
+
+  // Step-3 continuation token bridging verified-identity → set-password.
+  continuationTokenHash String?   @map("continuation_token_hash")
+  continuationExpiresAt DateTime? @map("continuation_expires_at")
+
+  verifiedAt  DateTime? @map("verified_at")
+  activatedAt DateTime? @map("activated_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("student_activations")
+}
+
+// ---------------------------------------------------------------------------
+//  PROFILE CHANGE REQUESTS  (protected-field corrections go through Registry)
+// ---------------------------------------------------------------------------
+
+model ProfileChangeRequest {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+
+  requestedById  String  @map("requested_by") @db.Uuid // the student's user id
+  fieldKey       String  @map("field_key") // e.g. "surname"
+  currentValue   String? @map("current_value")
+  requestedValue String  @map("requested_value")
+  reason         String
+  documentKey    String? @map("document_key") // supporting doc (object storage)
+
+  status       ChangeRequestStatus @default(PENDING)
+  // Separation of duties: the reviewer must differ from the requester
+  // (enforced by CHECK in guards.sql).
+  reviewedById String?             @map("reviewed_by") @db.Uuid
+  reviewNote   String?             @map("review_note")
+  reviewedAt   DateTime?           @map("reviewed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([studentRecordId])
+  @@index([status])
+  @@map("profile_change_requests")
+}
+
+// ---------------------------------------------------------------------------
+//  AUDIT  (append-only; UPDATE/DELETE blocked by trigger + revoked grants)
+// ---------------------------------------------------------------------------
+
+model AuditEvent {
+  id         BigInt   @id @default(autoincrement())
+  occurredAt DateTime @default(now()) @map("occurred_at")
+  actorId    String?  @map("actor_id") @db.Uuid // null for system/anon events
+  actorLabel String?  @map("actor_label") // denormalized for readability
+  action     String // e.g. "student.create"
+  entityType String   @map("entity_type") // e.g. "StudentRecord"
+  entityId   String?  @map("entity_id")
+  // Structured context; before/after captured for mutations.
+  metadata   Json?
+  beforeData Json?    @map("before_data")
+  afterData  Json?    @map("after_data")
+  ip         String?
+  userAgent  String?  @map("user_agent")
+
+  // -- Tier 2: tamper-evident chain (docs/04 §19.3) --------------------------
+  // Every column below is NULLABLE on purpose. Tier 1 ("standard") events — the
+  // high-volume majority — leave them empty, and the Phase 1 writer that predates
+  // this block keeps working unchanged. Only the security-critical actions listed
+  // in §19.2 are written as TAMPER_EVIDENT, and only those take the advisory lock
+  // that serialises seq/prevHash/rowHash. Mixing both tiers in ONE table is
+  // deliberate: an investigator reads a single chronological stream, and the chain
+  // still proves the subset that matters.
+  tier             AuditTier @default(STANDARD)
+  // Monotonic position in the hash chain; gaps are themselves evidence.
+  seq              BigInt?
+  prevHash         String?   @map("prev_hash")
+  // SHA256(prev_hash ‖ seq ‖ canonical_json(semantic fields)).
+  rowHash          String?   @map("row_hash")
+  // Ties every event of one logical operation together across services.
+  correlationId    String?   @map("correlation_id")
+  requestId        String?   @map("request_id")
+  // Failures are audited too — a denied attempt is the interesting event.
+  outcome          String?
+  reason           String?
+  // Snapshot of the actor's authority AT THE TIME. Roles get revoked; the audit
+  // trail must still answer "under what authority was this done".
+  actorRoles       Json?     @map("actor_roles")
+  actorScope       Json?     @map("actor_scope")
+  // Set when an admin acted AS another user; both identities are recorded.
+  impersonatedById String?   @map("impersonated_by") @db.Uuid
+
+  @@unique([seq])
+  @@index([occurredAt])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([correlationId])
+  @@map("audit_events")
+}
+
+/// Periodic notarisation of the audit chain (docs/04 §19.4). Storing the head
+/// hash somewhere the application role cannot rewrite is what makes the chain
+/// tamper-EVIDENT rather than merely tamper-resistant: an attacker with full DB
+/// access can recompute every row_hash, but cannot alter an anchor already
+/// written to object-lock storage or published externally.
+model AuditAnchor {
+  id            String    @id @default(uuid()) @db.Uuid
+  headSeq       BigInt    @map("head_seq")
+  headHash      String    @map("head_hash")
+  // WORM object key (hourly) and/or external publication reference (daily).
+  wormKey       String?   @map("worm_key")
+  externalRef   String?   @map("external_ref")
+  anchoredAt    DateTime  @default(now()) @map("anchored_at")
+  // Set by the verifier job; a failed verification is an INCIDENT, not a retry.
+  verifiedAt    DateTime? @map("verified_at")
+  verifyOutcome String?   @map("verify_outcome")
+
+  @@unique([headSeq])
+  @@index([anchoredAt])
+  @@map("audit_anchors")
+}
+
+// ---------------------------------------------------------------------------
+//  SYSTEM CONFIG  (typed key/value for non-secret runtime settings)
+// ---------------------------------------------------------------------------
+
+model SystemConfig {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by") @db.Uuid
+
+  @@map("system_config")
+}
+
+// ===========================================================================
+//  PHASE 2 — ACADEMIC STRUCTURE  (definition-only; later modules depend on it)
+//
+//  Contexts:
+//    organisation  → Semester (hangs off AcademicSession)
+//    curriculum    → CourseCategory, Course, CoursePrerequisite,
+//                    CourseRelationship, CurriculumVersion,
+//                    CurriculumRequirement, CourseOffering
+//    academic-config → GradeScale, GradeBand  (grade rules are DATA, not code)
+//
+//  Institution-specific rules are configurable, never hardcoded: course
+//  classifications (CourseCategory), grading (GradeScale/GradeBand) and credit
+//  limits (SystemConfig `credit.policy.*`) are all editable at runtime.
+// ===========================================================================
+
+/// A teaching period within an AcademicSession (e.g. First/Second Semester).
+/// The COUNT is not hardcoded — an institution creates as many as it runs.
+/// At most one may be current per session (partial unique index in guards.sql).
+model Semester {
+  id        String          @id @default(uuid()) @db.Uuid
+  sessionId String          @map("session_id") @db.Uuid
+  session   AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  sequence  Int // ordering within the session: 1, 2, (3)
+  name      String // "First Semester"
+  startDate DateTime?       @map("start_date") @db.Date
+  endDate   DateTime?       @map("end_date") @db.Date
+  isCurrent Boolean         @default(false) @map("is_current")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  offerings       CourseOffering[]
+  calendarWindows CalendarWindow[]
+  registrations   Registration[]
+  examPeriods     ExamPeriod[]
+  resultBatches   ResultBatch[]
+  gradeRecords    GradeRecord[]
+  semesterGpas    SemesterGpa[]
+  invoices        Invoice[]
+  feeSchedules    FeeSchedule[]
+
+  @@unique([sessionId, sequence])
+  @@index([sessionId])
+  @@map("semesters")
+}
+
+/// Configurable course classification vocabulary (Core, GST, Elective, ...).
+/// Data, not an enum, so institutions can add their own without code changes.
+model CourseCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique // CORE, GST, FACULTY_ELECTIVE, ...
+  label       String
+  description String?
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  courses Course[]
+
+  @@map("course_categories")
+}
+
+/// A catalogue course. code is UNIVERSITY-WIDE unique (case-insensitive index in
+/// guards.sql). creditUnits/level are NOMINAL defaults — the authoritative
+/// placement of a course within a programme (level + semester + compulsory/
+/// elective + optional credit override) lives on CurriculumRequirement, so the
+/// same course can be offered differently across programmes. A null departmentId
+/// means a university-wide course (e.g. General Studies) owned by no department.
+model Course {
+  id           String          @id @default(uuid()) @db.Uuid
+  code         String          @unique
+  title        String
+  description  String?
+  creditUnits  Int             @map("credit_units")
+  level        Int // nominal 100/200/...
+  categoryId   String?         @map("category_id") @db.Uuid
+  category     CourseCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  departmentId String?         @map("department_id") @db.Uuid
+  department   Department?     @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  isActive     Boolean         @default(true) @map("is_active")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  createdById  String?         @map("created_by") @db.Uuid
+
+  prerequisites     CoursePrerequisite[]    @relation("CourseToPrerequisites")
+  prerequisiteFor   CoursePrerequisite[]    @relation("PrerequisiteToCourses")
+  relationshipsFrom CourseRelationship[]    @relation("CourseRelationFrom")
+  relationshipsTo   CourseRelationship[]    @relation("CourseRelationTo")
+  requirements      CurriculumRequirement[]
+  offerings         CourseOffering[]
+  gradeRecords      GradeRecord[]
+
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([level])
+  @@map("courses")
+}
+
+/// Directed prerequisite edge: course REQUIRES prerequisiteCourse. Self-edges
+/// are rejected by a CHECK (guards.sql); cycles are rejected in the service
+/// (a CHECK cannot express reachability). Optional minGrade references a grade
+/// band key for a future results module.
+model CoursePrerequisite {
+  id                   String   @id @default(uuid()) @db.Uuid
+  courseId             String   @map("course_id") @db.Uuid
+  course               Course   @relation("CourseToPrerequisites", fields: [courseId], references: [id], onDelete: Cascade)
+  prerequisiteCourseId String   @map("prerequisite_course_id") @db.Uuid
+  prerequisiteCourse   Course   @relation("PrerequisiteToCourses", fields: [prerequisiteCourseId], references: [id], onDelete: Restrict)
+  minGrade             String?  @map("min_grade")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@unique([courseId, prerequisiteCourseId])
+  @@index([courseId])
+  @@index([prerequisiteCourseId])
+  @@map("course_prerequisites")
+}
+
+/// Advisory (non-prerequisite) relationship between two courses. Self-edges are
+/// rejected by a CHECK (guards.sql).
+model CourseRelationship {
+  id              String             @id @default(uuid()) @db.Uuid
+  courseId        String             @map("course_id") @db.Uuid
+  course          Course             @relation("CourseRelationFrom", fields: [courseId], references: [id], onDelete: Cascade)
+  relatedCourseId String             @map("related_course_id") @db.Uuid
+  relatedCourse   Course             @relation("CourseRelationTo", fields: [relatedCourseId], references: [id], onDelete: Restrict)
+  type            CourseRelationType
+  note            String?
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  @@unique([courseId, relatedCourseId, type])
+  @@index([courseId])
+  @@index([relatedCourseId])
+  @@map("course_relationships")
+}
+
+/// A versioned programme curriculum, anchored to the admission cohort it first
+/// applies to (effectiveFromSession). One version per (programme, cohort). Only
+/// DRAFT versions are editable; PUBLISHED versions are frozen.
+model CurriculumVersion {
+  id                     String           @id @default(uuid()) @db.Uuid
+  programmeId            String           @map("programme_id") @db.Uuid
+  programme              Programme        @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  name                   String
+  effectiveFromSessionId String           @map("effective_from_session_id") @db.Uuid
+  effectiveFromSession   AcademicSession  @relation(fields: [effectiveFromSessionId], references: [id], onDelete: Restrict)
+  status                 CurriculumStatus @default(DRAFT)
+  notes                  String?
+  publishedAt            DateTime?        @map("published_at")
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
+  createdById            String?          @map("created_by") @db.Uuid
+
+  requirements     CurriculumRequirement[]
+  studentRecords   StudentRecord[]
+  registrations    Registration[]
+  progressionRules ProgressionRule[]
+
+  @@unique([programmeId, effectiveFromSessionId])
+  @@index([programmeId])
+  @@map("curriculum_versions")
+}
+
+/// A course placed in a curriculum at a nominal level + semester slot, with its
+/// compulsory/elective classification and an optional credit-unit override.
+/// semesterSequence is a NOMINAL slot (1/2), session-agnostic — concrete
+/// per-session scheduling is a CourseOffering. A course appears at most once
+/// per curriculum version.
+model CurriculumRequirement {
+  id                  String            @id @default(uuid()) @db.Uuid
+  curriculumVersionId String            @map("curriculum_version_id") @db.Uuid
+  curriculumVersion   CurriculumVersion @relation(fields: [curriculumVersionId], references: [id], onDelete: Cascade)
+  courseId            String            @map("course_id") @db.Uuid
+  course              Course            @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  level               Int
+  semesterSequence    Int               @map("semester_sequence")
+  requirementType     RequirementType   @map("requirement_type")
+  creditUnits         Int?              @map("credit_units") // override; null => course.creditUnits
+  electiveGroup       String?           @map("elective_group") // groups "choose N of" electives
+  createdAt           DateTime          @default(now()) @map("created_at")
+
+  @@unique([curriculumVersionId, courseId])
+  @@index([curriculumVersionId])
+  @@index([courseId])
+  @@map("curriculum_requirements")
+}
+
+/// A concrete offering of a course in a given session + semester (optionally by
+/// department). The reuse-across-time mechanism: the same Course is offered in
+/// many sessions via distinct offerings, unique per (course, session, semester).
+/// Phase 2 is definition-only — capacity/seatsTaken/OPEN/CLOSED are reserved for
+/// registration and carry no behaviour yet (seatsTaken stays 0).
+model CourseOffering {
+  id           String          @id @default(uuid()) @db.Uuid
+  courseId     String          @map("course_id") @db.Uuid
+  course       Course          @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  sessionId    String          @map("session_id") @db.Uuid
+  session      AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  semesterId   String          @map("semester_id") @db.Uuid
+  semester     Semester        @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+  departmentId String?         @map("department_id") @db.Uuid
+  department   Department?     @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  status       OfferingStatus  @default(DRAFT)
+  capacity     Int?
+  seatsTaken   Int             @default(0) @map("seats_taken")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  createdById  String?         @map("created_by") @db.Uuid
+
+  allocations          CourseAllocation[]
+  assessmentComponents AssessmentComponent[]
+  registrationLines    RegistrationLine[]
+  resultBatches        ResultBatch[]
+  examSchedules        ExamSchedule[]
+  gradeRecords         GradeRecord[]
+  resultWithholdings   ResultWithholding[]
+  misconductCases      MisconductCase[]
+
+  @@unique([courseId, sessionId, semesterId])
+  @@index([sessionId])
+  @@index([semesterId])
+  @@index([courseId])
+  @@index([departmentId])
+  @@map("course_offerings")
+}
+
+/// A configurable grading system. At most one may be the default (partial unique
+/// index in guards.sql). Future results/GPA modules read the bands from here
+/// rather than hardcoding a scale.
+model GradeScale {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  name        String
+  description String?
+  isDefault   Boolean  @default(false) @map("is_default")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  bands         GradeBand[]
+  // Every GradeRecord PINS the scale it was computed against, so a later scale
+  // revision never silently re-grades historical results (docs/03 §10.3).
+  gradeRecords  GradeRecord[]
+  resultBatches ResultBatch[]
+
+  @@map("grade_scales")
+}
+
+/// One band of a GradeScale: a score interval mapped to a letter grade and a
+/// grade point. Intervals must not overlap within a scale (checked in service);
+/// minScore <= maxScore is enforced by a CHECK (guards.sql).
+model GradeBand {
+  id         String     @id @default(uuid()) @db.Uuid
+  scaleId    String     @map("scale_id") @db.Uuid
+  scale      GradeScale @relation(fields: [scaleId], references: [id], onDelete: Cascade)
+  grade      String // "A", "B", ...
+  minScore   Decimal    @map("min_score") @db.Decimal(5, 2)
+  maxScore   Decimal    @map("max_score") @db.Decimal(5, 2)
+  gradePoint Decimal    @map("grade_point") @db.Decimal(3, 2)
+  sortOrder  Int        @default(0) @map("sort_order")
+
+  @@unique([scaleId, grade])
+  @@index([scaleId])
+  @@map("grade_bands")
+}
+
+// ===========================================================================
+//  PHASE 3+ — THE REST OF THE SYSTEM
+//
+//  Everything below completes the eleven bounded contexts of docs/02 §2.1. The
+//  tables land ahead of the services that drive them because the data model is
+//  the expensive thing to change once production data exists, and most of the
+//  §2.2 invariants are STRUCTURAL — partial unique indexes, supersede chains,
+//  append-only ledgers, copied-at-commit columns. A service can be rewritten in
+//  an afternoon; a column that should have been immutable cannot.
+//
+//    calendar      → CalendarWindow                 (the system clock)
+//    approvals     → ApprovalStage                  (shared by two domains)
+//    admission     → Application … ImportBatchRow
+//    curriculum    → CourseAllocation               (teaching load)
+//    registration  → Registration … RegistrationException
+//    finance       → StudentCategory … PaymentReconciliation
+//    assessment    → AssessmentComponent … ProgressionProposal
+//    examination   → ExamPeriod … MisconductCase
+//    clearance     → ClearanceUnit … ClearanceStep
+//    graduation    → GraduationCandidate … ExportBatchItem
+//    credentials   → TranscriptRequest … CertificateIssuance
+//    cross-cutting → StoredFile, notifications
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+//  CALENDAR  (docs/03 §8.1 — the academic calendar IS the system clock)
+// ---------------------------------------------------------------------------
+
+/// One open/close window for one activity. Every time-gated operation in the
+/// system asks ONE question — isWindowOpen(type, scope, at) — instead of each
+/// module inventing its own date check, which is how "registration closed but
+/// the add/drop screen still worked" happens.
+///
+/// Scope is the same four-level hierarchy as authorization, resolved
+/// MOST-SPECIFIC-FIRST: a programme window overrides its department's, which
+/// overrides its faculty's, which overrides the global one. That is what lets
+/// Medicine run a different calendar without cloning the whole calendar.
+model CalendarWindow {
+  id         String     @id @default(uuid()) @db.Uuid
+  windowType WindowType @map("window_type")
+
+  sessionId  String          @map("session_id") @db.Uuid
+  session    AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  // Null for session-wide windows (e.g. CLEARANCE runs across both semesters).
+  semesterId String?         @map("semester_id") @db.Uuid
+  semester   Semester?       @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  scopeType    ScopeType   @default(GLOBAL) @map("scope_type")
+  facultyId    String?     @map("faculty_id") @db.Uuid
+  faculty      Faculty?    @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  departmentId String?     @map("department_id") @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  programmeId  String?     @map("programme_id") @db.Uuid
+  programme    Programme?  @relation(fields: [programmeId], references: [id], onDelete: Cascade)
+
+  opensAt  DateTime @map("opens_at")
+  closesAt DateTime @map("closes_at")
+  // Distinct from the dates: an emergency close must not require rewriting
+  // history, and reopening must leave a trace (hence exceptions, below).
+  isActive Boolean  @default(true) @map("is_active")
+  notes    String?
+
+  // RESULT_RELEASE windows are dual-approved (Q-35): premature release is the
+  // one calendar mistake that cannot be undone.
+  approvedById String?   @map("approved_by") @db.Uuid
+  approvedAt   DateTime? @map("approved_at")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdById String?  @map("created_by") @db.Uuid
+
+  @@index([windowType, sessionId])
+  @@index([sessionId, semesterId])
+  @@index([opensAt, closesAt])
+  @@map("calendar_windows")
+}
+
+// ---------------------------------------------------------------------------
+//  APPROVAL CHAINS  (docs/03 §9.6 registration, §10.4 results)
+// ---------------------------------------------------------------------------
+
+/// A configurable stage in an approval chain. ONE table serves both domains
+/// because the shape is identical — an ordered list of (who approves, at what
+/// scope) — and Q-12/Q-30 leave the DEPTH institution-specific: a university
+/// that wants adviser→HOD→dean adds a row, it does not get a code change.
+///
+/// Enforcement that cannot live here: no stage may be skipped, and no actor may
+/// approve two CONSECUTIVE stages (separation of duties, docs/02 §5.4) — both
+/// are checked in the service against the recorded approvals.
+model ApprovalStage {
+  id       String         @id @default(uuid()) @db.Uuid
+  domain   ApprovalDomain
+  sequence Int // 1-based; the order approvals must occur in
+  key      String // ADVISER, HOD, DEAN, EXAM_OFFICER, SENATE, ...
+  name     String
+
+  // The role a principal must hold to act at this stage. Null means "any
+  // principal with the domain permission", used for single-stage setups.
+  requiredRoleId String?   @map("required_role_id") @db.Uuid
+  requiredRole   Role?     @relation(fields: [requiredRoleId], references: [id], onDelete: Restrict)
+  // The level the approver's scope must match against the item being approved.
+  scopeKind      ScopeType @default(DEPARTMENT) @map("scope_kind")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  registrationApprovals RegistrationApproval[]
+  resultApprovals       ResultApproval[]
+
+  @@unique([domain, sequence])
+  @@unique([domain, key])
+  @@map("approval_stages")
+}
+
+// ---------------------------------------------------------------------------
+//  ADMISSION  (docs/03 §7 — one of only TWO doors to a student record)
+// ---------------------------------------------------------------------------
+
+/// An application for admission. Deliberately NOT a student record: an applicant
+/// is not a student, has no matriculation number, and most applicants never
+/// become one. The crossing point is AdmissionOffer.acceptance → enrolment.
+model Application {
+  id                String @id @default(uuid()) @db.Uuid
+  // Human-facing reference the applicant quotes in correspondence.
+  applicationNumber String @unique @map("application_number")
+
+  sessionId   String          @map("session_id") @db.Uuid
+  session     AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  programmeId String          @map("programme_id") @db.Uuid
+  programme   Programme       @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+
+  // -- Applicant-supplied identity (UNVERIFIED until admission) --------------
+  // These are the applicant's CLAIMS. They become authoritative only when an
+  // admission officer accepts them into a StudentRecord, which is precisely the
+  // moment the university takes ownership of the identity (docs/00 §0).
+  jambRegistrationNumber String?   @map("jamb_registration_number")
+  surname                String
+  firstName              String    @map("first_name")
+  otherNames             String?   @map("other_names")
+  dateOfBirth            DateTime  @map("date_of_birth") @db.Date
+  gender                 Gender    @default(UNSPECIFIED)
+  email                  String    @db.Citext
+  phone                  String?
+  entryMode              EntryMode @default(UTME) @map("entry_mode")
+  // O'level / UTME / DE results as supplied; shape varies by entry mode, so it
+  // is JSON rather than a rigid table an institution would outgrow.
+  qualifications         Json?
+
+  status      ApplicationStatus @default(DRAFT)
+  submittedAt DateTime?         @map("submitted_at")
+
+  // Screening outcome. reviewScore is whatever the institution's rubric yields.
+  reviewScore  Decimal?  @map("review_score") @db.Decimal(6, 2)
+  reviewNote   String?   @map("review_note")
+  reviewedById String?   @map("reviewed_by") @db.Uuid
+  reviewedAt   DateTime? @map("reviewed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  documents ApplicationDocument[]
+  offer     AdmissionOffer?
+
+  @@index([sessionId, status])
+  @@index([programmeId])
+  @@index([jambRegistrationNumber])
+  @@index([email])
+  @@map("applications")
+}
+
+/// A file an applicant uploaded (certificate, birth certificate, ...). The bytes
+/// live in object storage; only the reference and the verification verdict live
+/// here (docs/04 §17.1 — never store files in the database).
+model ApplicationDocument {
+  id            String      @id @default(uuid()) @db.Uuid
+  applicationId String      @map("application_id") @db.Uuid
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  // Configurable vocabulary: WAEC_RESULT, BIRTH_CERTIFICATE, ...
+  documentType  String      @map("document_type")
+  fileId        String      @map("file_id") @db.Uuid
+  file          StoredFile  @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  isVerified   Boolean   @default(false) @map("is_verified")
+  verifiedById String?   @map("verified_by") @db.Uuid
+  verifiedAt   DateTime? @map("verified_at")
+  rejectReason String?   @map("reject_reason")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([applicationId])
+  @@map("application_documents")
+}
+
+/// The formal offer, and the ONE row that records a student record being created
+/// from an application. `studentRecordId` is unique so an offer can never
+/// mint two records, and the pair (application 1:1 offer) makes double-offering
+/// unrepresentable. Matriculation numbers are assigned at ACCEPTANCE, not at
+/// offer, because an unaccepted offer must not consume a number.
+model AdmissionOffer {
+  id            String      @id @default(uuid()) @db.Uuid
+  applicationId String      @unique @map("application_id") @db.Uuid
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  sessionId   String          @map("session_id") @db.Uuid
+  session     AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  // May differ from the applied-for programme (admitted to second choice).
+  programmeId String          @map("programme_id") @db.Uuid
+  programme   Programme       @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  entryLevel  Int             @default(100) @map("entry_level")
+
+  status       OfferStatus @default(ISSUED)
+  // An offer that is not accepted in time lapses rather than lingering.
+  expiresAt    DateTime?   @map("expires_at")
+  issuedById   String?     @map("issued_by") @db.Uuid
+  issuedAt     DateTime    @default(now()) @map("issued_at")
+  respondedAt  DateTime?   @map("responded_at")
+  // Set on REVOKED; revocation is rare and must always carry a reason.
+  revokeReason String?     @map("revoke_reason")
+
+  // The crossing point into the student-records context.
+  studentRecordId String?        @unique @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord? @relation(fields: [studentRecordId], references: [id], onDelete: SetNull)
+  enrolledAt      DateTime?      @map("enrolled_at")
+
+  @@index([sessionId, status])
+  @@index([programmeId])
+  @@map("admission_offers")
+}
+
+/// Allocates matriculation numbers in a never-reuses sequence (docs/03 §7.2).
+/// A row exists per issuing unit (a faculty, or the whole institution at GLOBAL
+/// scope), and the counter is bumped with an atomic
+///   UPDATE ... SET next_value = next_value + 1 ... RETURNING next_value
+/// — so two concurrent acceptances can never receive the same number. The
+/// FORMAT is a template (e.g. "UNI/{year}/{n:05}") rather than a hardcoded
+/// scheme, because number-format changes are a registry matter, not a code one.
+model MatriculationSequence {
+  id             String    @id @default(uuid()) @db.Uuid
+  scopeKey       String    @unique // "GLOBAL", "FACULTY:<id>", ... — the scope identity
+  facultyId      String?   @map("faculty_id") @db.Uuid
+  departmentId   String?   @map("department_id") @db.Uuid
+  programmeId    String?   @map("programme_id") @db.Uuid
+  format         String // "UNI/{year}/{n:05}"
+  // The year is part of the sequence key (the next number for 2025 starts over),
+  // so {year} is filled from the CURRENT value of this column at allocation.
+  year           Int
+  nextValue      Int       @default(1) @map("next_value")
+  lastAssignedAt DateTime? @map("last_assigned_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([scopeKey, year])
+  @@map("matriculation_sequences")
+}
+
+// ---------------------------------------------------------------------------
+//  BULK IMPORT  (docs/03 §7.3 — the second door, for existing students)
+// ---------------------------------------------------------------------------
+
+/// One upload of existing-student records (JAMB CSV, institutional extract).
+/// The batch is the unit of review: it is validated, dry-run, approved as a
+/// whole, and can be REVERSED as a whole — partial adoption of an upload is
+/// exactly the kind of half-truth that corrupts a registry.
+model ImportBatch {
+  id            String            @id @default(uuid()) @db.Uuid
+  sessionId     String            @map("session_id") @db.Uuid
+  session       AcademicSession   @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  programmeId   String?           @map("programme_id") @db.Uuid
+  programme     Programme?        @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  fileName      String            @map("file_name")
+  fileId        String            @map("file_id") @db.Uuid
+  file          StoredFile        @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  source        String // JAMB_CSV, INSTITUTIONAL_EXTRACT, ...
+  status        ImportBatchStatus @default(UPLOADED)
+  totalRows     Int               @default(0) @map("total_rows")
+  // Per-row verdicts live on ImportBatchRow; these are the batch-level counts.
+  validCount    Int               @default(0) @map("valid_count")
+  invalidCount  Int               @default(0) @map("invalid_count")
+  // Only adopted rows are revoked on reversal (a row that failed validation is
+  // not a student yet).
+  adoptedCount  Int               @default(0) @map("adopted_count")
+  reversedCount Int               @default(0) @map("reversed_count")
+
+  validationErrors Json?     @map("validation_errors") // summarized
+  createdById      String?   @map("created_by") @db.Uuid
+  approvedById     String?   @map("approved_by") @db.Uuid
+  approvedAt       DateTime? @map("approved_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  rows ImportBatchRow[]
+
+  @@index([sessionId])
+  @@index([status])
+  @@map("import_batches")
+}
+
+/// One row of an import. Rejected rows keep their error so a re-upload can be
+/// generated without re-guessing why they failed.
+model ImportBatchRow {
+  id            String      @id @default(uuid()) @db.Uuid
+  batchId       String      @map("batch_id") @db.Uuid
+  batch         ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  // The row's place in the uploaded file, for blame-free round-tripping.
+  rowNumber     Int         @map("row_number")
+  rawData       Json        @map("raw_data")
+  // null while UPLOADED/VALIDATED; the validation verdict thereafter.
+  isValid       Boolean?    @map("is_valid")
+  errors        Json? // [{field, code, message}]
+  // Matriculation number THIS row claims to already hold (a re-import or a
+  // migrated record). Import is how existing students enter the system, so
+  // claiming an existing number is a match, not an error.
+  claimedMatric String?     @map("claimed_matric")
+
+  // The record this row created (or matched, on re-import).
+  studentRecordId   String?        @map("student_record_id") @db.Uuid
+  studentRecord     StudentRecord? @relation(fields: [studentRecordId], references: [id], onDelete: SetNull)
+  // null until committed; set to the batch id if this row's record is
+  // REVERSED, else the id of the reversal batch.
+  reversedInBatchId String?        @map("reversed_in_batch_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([batchId, rowNumber])
+  @@index([batchId])
+  @@map("import_batch_rows")
+}
+
+// ---------------------------------------------------------------------------
+//  CURRICULUM — TEACHING LOAD  (docs/03 §10.2)
+// ---------------------------------------------------------------------------
+
+/// Who may enter scores for an offering. A lecturer can only record scores for
+/// offerings allocated to them — this is the row that makes that check possible,
+/// so it doubles as the authorization input for score entry. Unique per
+/// (offering, staff) so an allocation is a set, not a multiset.
+model CourseAllocation {
+  id          String         @id @default(uuid()) @db.Uuid
+  offeringId  String         @map("offering_id") @db.Uuid
+  offering    CourseOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  staffUserId String         @map("staff_user_id") @db.Uuid
+  staffUser   User           @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  role        String         @default("LECTURER") // LECTURER, COORDINATOR, ...
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@unique([offeringId, staffUserId])
+  @@index([staffUserId])
+  @@map("course_allocations")
+}
+
+// ---------------------------------------------------------------------------
+//  REGISTRATION  (docs/03 §9 — the operational heart of the system)
+// ---------------------------------------------------------------------------
+
+/// A student's course registration for ONE semester. Registration is the hinge
+/// the whole term turns on: it drives fees, exam eligibility, class lists and
+/// eventually the transcript, so several things are pinned into this row rather
+/// than looked up later.
+///
+///   • curriculumVersionId is COPIED from the student at submission. The
+///     assessment must be against the cohort's curriculum (INV-7), and a
+///     curriculum published mid-year must not retroactively invalidate a
+///     registration already approved.
+///   • idempotencyKey makes the submit endpoint safe to retry — a student on a
+///     flaky connection who taps "submit" twice gets ONE registration.
+///   • minUnits/maxUnits are snapshotted from policy at commit (INV-8) so a
+///     later policy change cannot make an approved registration retroactively
+///     illegal.
+model Registration {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+
+  sessionId  String          @map("session_id") @db.Uuid
+  session    AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  semesterId String          @map("semester_id") @db.Uuid
+  semester   Semester        @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+  level      Int // the student's level AT registration time
+
+  curriculumVersionId String?            @map("curriculum_version_id") @db.Uuid
+  curriculumVersion   CurriculumVersion? @relation(fields: [curriculumVersionId], references: [id], onDelete: Restrict)
+
+  status RegistrationStatus @default(DRAFT)
+
+  // Totals maintained from the lines; kept denormalized because every gate and
+  // every printed slip needs them and recomputing per read is wasteful.
+  totalUnits Int  @default(0) @map("total_units")
+  minUnits   Int? @map("min_units")
+  maxUnits   Int? @map("max_units")
+
+  submittedAt  DateTime? @map("submitted_at")
+  approvedAt   DateTime? @map("approved_at")
+  // The point of no return (INV-9): lines become immutable, credit units are
+  // frozen, exam eligibility is created and the slip is generated.
+  lockedAt     DateTime? @map("locked_at")
+  lockedById   String?   @map("locked_by") @db.Uuid
+  rejectReason String?   @map("reject_reason")
+
+  idempotencyKey String? @unique @map("idempotency_key")
+  // The signed PDF produced at lock; regenerating must be byte-identical.
+  slipDocumentId String? @map("slip_document_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  lines      RegistrationLine[]
+  approvals  RegistrationApproval[]
+  exceptions RegistrationException[]
+
+  // One registration per student per semester. A "second registration" is an
+  // amendment to the existing one, never a parallel row.
+  @@unique([studentRecordId, semesterId])
+  @@index([sessionId, semesterId])
+  @@index([status])
+  @@map("registrations")
+}
+
+/// One course on a registration. `creditUnits` is COPIED here at commit (INV-6),
+/// not read through to the course: a course whose credit units are corrected
+/// next year must not silently restate a graduate's transcript. `lineType`
+/// distinguishes a first attempt from a carryover, which is what makes repeat
+/// handling and Q-02 (dilution vs best-grade) expressible at all.
+model RegistrationLine {
+  id             String       @id @default(uuid()) @db.Uuid
+  registrationId String       @map("registration_id") @db.Uuid
+  registration   Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  courseOfferingId String         @map("course_offering_id") @db.Uuid
+  courseOffering   CourseOffering @relation(fields: [courseOfferingId], references: [id], onDelete: Restrict)
+
+  creditUnits Int                   @map("credit_units")
+  lineType    RegistrationLineType  @default(NEW) @map("line_type")
+  state       RegistrationLineState @default(ACTIVE)
+
+  // Set when the line was added under an approved exception (prerequisite
+  // override, unit override). Null for the ordinary path.
+  exceptionId String? @map("exception_id") @db.Uuid
+
+  addedAt     DateTime  @default(now()) @map("added_at")
+  droppedAt   DateTime? @map("dropped_at")
+  // A drop after the add/drop window closes requires an exception; keeping the
+  // actor here makes that reviewable without joining the audit log.
+  droppedById String?   @map("dropped_by") @db.Uuid
+
+  eligibility ExamEligibility?
+  // A list, not an optional: supersession retains the earlier grade (INV-12).
+  // The CURRENT one is the row with superseded_by IS NULL.
+  gradeRecords GradeRecord[]
+
+  // Uniqueness of (registration, offering) is a PARTIAL index in guards.sql,
+  // restricted to state = 'ACTIVE': a dropped line must be able to coexist with
+  // a re-added one, which a plain unique constraint would forbid.
+  @@index([registrationId])
+  @@index([courseOfferingId])
+  @@map("registration_lines")
+}
+
+/// One recorded decision in the registration approval chain. The chain's SHAPE
+/// is data (ApprovalStage); this is what happened. Two rules the service checks
+/// against these rows: stages are consumed in order, and the same actor may not
+/// approve two consecutive stages (docs/02 §5.4).
+model RegistrationApproval {
+  id             String        @id @default(uuid()) @db.Uuid
+  registrationId String        @map("registration_id") @db.Uuid
+  registration   Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  stageId        String        @map("stage_id") @db.Uuid
+  stage          ApprovalStage @relation(fields: [stageId], references: [id], onDelete: Restrict)
+
+  decision    ApprovalDecision
+  comment     String?
+  decidedById String           @map("decided_by") @db.Uuid
+  decidedAt   DateTime         @default(now()) @map("decided_at")
+
+  // One decision per stage per registration; a reversal is a new registration
+  // cycle, not a second row for the same stage.
+  @@unique([registrationId, stageId])
+  @@index([registrationId])
+  @@map("registration_approvals")
+}
+
+/// A documented, approved departure from the rules (docs/03 §9.7). Modelled
+/// explicitly because these WILL happen — the alternative is an administrator
+/// editing rows directly, which leaves no reviewable trace of who allowed what.
+model RegistrationException {
+  id              String          @id @default(uuid()) @db.Uuid
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  registrationId  String?         @map("registration_id") @db.Uuid
+  registration    Registration?   @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  sessionId       String          @map("session_id") @db.Uuid
+  session         AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  exceptionType  RegistrationExceptionType @map("exception_type")
+  reason         String
+  // Type-specific payload: the overridden unit cap, the waived prerequisite
+  // course id, the reopened window's new closing time.
+  parameters     Json?
+  evidenceFileId String?                   @map("evidence_file_id") @db.Uuid
+
+  status        ApprovalStatus @default(PENDING)
+  requestedById String         @map("requested_by") @db.Uuid
+  approvedById  String?        @map("approved_by") @db.Uuid
+  decisionNote  String?        @map("decision_note")
+  decidedAt     DateTime?      @map("decided_at")
+  // Exceptions expire; an open-ended override is an unlocked back door.
+  expiresAt     DateTime?      @map("expires_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  @@index([studentRecordId])
+  @@index([sessionId, exceptionType])
+  @@index([status])
+  @@map("registration_exceptions")
+}
+
+// ---------------------------------------------------------------------------
+//  FINANCE  (docs/03 §11 — money, and the rules around it)
+// ---------------------------------------------------------------------------
+
+/// Fee band / differential-fee bucket (docs/03 §11.2, Q-36). A student is
+/// recategorised by an administrator WITHOUT an amendment — it is not identity.
+model StudentCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique // INDIGENE, NON_INDIGENE, INTERNATIONAL, ...
+  label       String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  studentRecords StudentRecord[]
+
+  @@map("student_categories")
+}
+
+/// One year's fee structure for a programme. `clearanceThresholdBps` is the
+/// minimum PAID fraction (in basis points) that counts as "cleared" for
+/// graduation — the same data point Q-24 asks to make configurable. A schedule
+/// is immutable in practice once students have been invoiced against it.
+model FeeSchedule {
+  id                    String           @id @default(uuid()) @db.Uuid
+  programmeId           String           @map("programme_id") @db.Uuid
+  programme             Programme        @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  sessionId             String?          @map("session_id") @db.Uuid
+  session               AcademicSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  name                  String // "2024/2025 tuition"
+  // Minimum percentage of the schedule that must be paid for fee clearance
+  // (INV-16, Q-24). 10000 = 100%.
+  clearanceThresholdBps Int              @default(10000) @map("clearance_threshold_bps")
+  isActive              Boolean          @default(true) @map("is_active")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+
+  items      FeeItem[]
+  Semester   Semester? @relation(fields: [semesterId], references: [id])
+  semesterId String?   @db.Uuid
+
+  @@index([programmeId])
+  @@map("fee_schedules")
+}
+
+/// One line of a fee schedule. `feeType` is a configurable vocabulary (TUITION,
+/// ACCOMMODATION, DEVELOPMENT_LEVY, ...) — institutions add their own without a
+/// migration. Amounts are INTEGER MINOR UNITS (kobo), never floats.
+model FeeItem {
+  id           String        @id @default(uuid()) @db.Uuid
+  scheduleId   String        @map("schedule_id") @db.Uuid
+  schedule     FeeSchedule   @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  feeType      String        @map("fee_type")
+  label        String
+  amount       BigInt // minor units
+  isMandatory  Boolean       @default(true) @map("is_mandatory")
+  sortOrder    Int           @default(0) @map("sort_order")
+  invoiceLines InvoiceLine[]
+
+  @@unique([scheduleId, feeType])
+  @@index([scheduleId])
+  @@map("fee_items")
+}
+
+/// An invoice issued to a student for a semester. `totalAmount` and `paidAmount`
+/// are PROJECTIONS: total from the lines, paid from the ledger. The ledger is
+/// the truth (INV-14) — paidAmount is a cache the payment service refreshes on
+/// each POSTED_TO_LEDGER. Fee clearance is DERIVED (INV-16), never a boolean
+/// column: cleared = paid/total >= the schedule's threshold.
+model Invoice {
+  id              String          @id @default(uuid()) @db.Uuid
+  invoiceNumber   String          @unique @map("invoice_number")
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  sessionId       String          @map("session_id") @db.Uuid
+  session         AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  semesterId      String?         @map("semester_id") @db.Uuid
+  semester        Semester?       @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+
+  status      InvoiceStatus @default(DRAFT)
+  // One invoice per student per semester. DRAFT → ISSUED is the only mutation
+  // that produces a number a student can quote; cancels replace, never reuse.
+  issuedAt    DateTime?     @map("issued_at")
+  dueAt       DateTime?     @map("due_at")
+  totalAmount BigInt        @default(0) @map("total_amount") // projection from lines
+  paidAmount  BigInt        @default(0) @map("paid_amount") // projection from ledger
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  lines          InvoiceLine[]
+  // Many, not one: a failed or abandoned attempt does not stop a student from
+  // paying the same invoice again, and every attempt must stay on record.
+  paymentIntents PaymentIntent[]
+  ledgerEntries  LedgerEntry[]
+  waivers        Waiver[]
+
+  // ISSUED/PAID/VOID/cancelled — but an invoice that was PAID may never be
+  // VOIDed; money that moved needs a reversal, not a status change.
+  @@index([studentRecordId])
+  @@index([sessionId, semesterId])
+  @@map("invoices")
+}
+
+/// One charge on an invoice. Fee items are snapshotted into the invoice line at
+/// issue time — the schedule may change next week; this invoice does not.
+model InvoiceLine {
+  id          String   @id @default(uuid()) @db.Uuid
+  invoiceId   String   @map("invoice_id") @db.Uuid
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  feeItemId   String?  @map("fee_item_id") @db.Uuid
+  feeItem     FeeItem? @relation(fields: [feeItemId], references: [id], onDelete: SetNull)
+  description String
+  quantity    Int      @default(1)
+  unitAmount  BigInt   @map("unit_amount")
+  amount      BigInt // quantity × unitAmount, denormalized for display
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+
+/// A payment a student initiated (docs/03 §11.3). The lifecycle is
+///   CREATED → PENDING → { PAID → POSTED_TO_LEDGER
+///                          | UNDERPAID | OVERPAID | FAILED | ABANDONED }
+/// Webhooks are an OPTIMISATION; polling is the guarantee — the payment service
+/// re-checks provider status until a terminal state. `providerReference` is the
+/// idempotency key (INV-15): a re-sent webhook or a re-poll cannot double-post.
+model PaymentIntent {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  invoiceId       String?       @map("invoice_id") @db.Uuid
+  invoice         Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  amount            BigInt // minor units
+  currency          String              @default("NGN")
+  provider          String // PAYSTACK, REMITA, FLUTTERWAVE, ...
+  providerReference String?             @map("provider_reference") // the provider's id
+  status            PaymentIntentStatus @default(CREATED)
+
+  // Set on UNDERPAID/OVERPAID with the delta, so the student is told the exact
+  // shortfall instead of "payment failed".
+  discrepancyAmount BigInt? @map("discrepancy_amount")
+
+  idempotencyKey String    @unique @map("idempotency_key")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  paidAt         DateTime? @map("paid_at")
+  // Set when the intent is posted to the ledger.
+  postedAt       DateTime? @map("posted_at")
+
+  events PaymentEvent[]
+
+  @@index([studentRecordId])
+  @@index([invoiceId])
+  @@index([providerReference])
+  @@map("payment_intents")
+}
+
+/// Every message from the provider, IMMUTABLY. The raw payload is stored
+/// verbatim — a webhook whose meaning we misjudge today may be understood
+/// differently after a provider behaviour change, and the evidence must exist.
+model PaymentEvent {
+  id              String        @id @default(uuid()) @db.Uuid
+  paymentIntentId String        @map("payment_intent_id") @db.Uuid
+  paymentIntent   PaymentIntent @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+  eventType       String        @map("event_type") // charge.success, charge.failed, ...
+  providerPayload Json          @map("provider_payload") // raw, verbatim
+  // Monotonic per intent: replay protection needs an order, and a late-arriving
+  // older event must be recognisable as such.
+  sequence        Int
+  receivedAt      DateTime      @default(now()) @map("received_at")
+
+  @@unique([paymentIntentId, sequence])
+  @@index([paymentIntentId])
+  @@map("payment_events")
+}
+
+/// The append-only financial ledger (INV-14). Balances are NEVER stored — they
+/// are SUMs over this table, recomputed at read time, which is what makes a
+/// corrupt balance a computing bug rather than a data-integrity incident. Every
+/// insert is a side effect of a documented source (invoice issue, payment post,
+/// waiver, reversal, adjustment); the immutability trigger lives in guards.sql.
+model LedgerEntry {
+  id              String           @id @default(uuid()) @db.Uuid
+  studentRecordId String           @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord    @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  sessionId       String?          @map("session_id") @db.Uuid
+  session         AcademicSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  direction   LedgerDirection
+  source      LedgerSource
+  amount      BigInt // minor units, always positive; direction carries the sign
+  description String
+
+  // Which originating document this entry realises. Both are nullable because
+  // ADJUSTMENT entries are their own source; at least one is normally set.
+  invoiceId       String?  @map("invoice_id") @db.Uuid
+  invoice         Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  paymentIntentId String?  @map("payment_intent_id") @db.Uuid
+
+  // One ledger entry per originating action: the same payment can never post
+  // twice, and a reversal is a NEW entry (the original stays).
+  idempotencyKey String   @unique @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+  // Actors, denormalized for the immutable record.
+  createdById    String?  @map("created_by") @db.Uuid
+
+  @@index([studentRecordId, createdAt])
+  @@index([invoiceId])
+  @@index([source])
+  @@map("ledger_entries")
+}
+
+/// An approved reduction of a charge. Distinct from a reversal: a waiver is
+/// granted BEFORE payment and pre-empts part of the debt; a reversal unwinds an
+/// already-posted entry. Same separation-of-duties shape as everywhere else.
+model Waiver {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  invoiceId       String?       @map("invoice_id") @db.Uuid
+  invoice         Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  feeType         String?       @map("fee_type")
+  amount          BigInt
+  reason          String
+
+  status            ApprovalStatus   @default(PENDING)
+  requestedById     String           @map("requested_by") @db.Uuid
+  approvedById      String?          @map("approved_by") @db.Uuid
+  decisionNote      String?          @map("decision_note")
+  decidedAt         DateTime?        @map("decided_at")
+  appliedAt         DateTime?        @map("applied_at") // when the ledger entry was written
+  createdAt         DateTime         @default(now()) @map("created_at")
+  AcademicSession   AcademicSession? @relation(fields: [academicSessionId], references: [id])
+  academicSessionId String?          @db.Uuid
+
+  @@index([studentRecordId])
+  @@index([status])
+  @@map("waivers")
+}
+
+/// Third-party education-loan clearance (docs/03 §11.4, Q-38). A student
+/// repaying via NELFUND etc. presents a clearance; the finance office records
+/// it here and it feeds the same derived fee-clearance check.
+model LoanClearance {
+  id              String          @id @default(uuid()) @db.Uuid
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  sessionId       String          @map("session_id") @db.Uuid
+  session         AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  loanProvider    String          @map("loan_provider")
+  reference       String          @unique
+  amountCovered   BigInt          @map("amount_covered")
+  validFrom       DateTime?       @map("valid_from")
+  validTo         DateTime?       @map("valid_to")
+  status          ApprovalStatus  @default(PENDING)
+  recordedById    String?         @map("recorded_by") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  @@index([studentRecordId])
+  @@map("loan_clearances")
+}
+
+/// One day's reconciliation of provider settlement reports against our ledger
+/// (docs/03 §11.5). Reconcile daily; discrepancies are surfaced, never silently
+/// absorbed. The report file is kept immutably alongside the verdict.
+model PaymentReconciliation {
+  id             String      @id @default(uuid()) @db.Uuid
+  provider       String
+  settlementDate DateTime    @map("settlement_date") @db.Date
+  reportFileId   String?     @map("report_file_id") @db.Uuid
+  reportFile     StoredFile? @relation(fields: [reportFileId], references: [id], onDelete: SetNull)
+
+  // Provider totals vs. our posted totals, all in minor units.
+  providerTotal  BigInt @map("provider_total")
+  ledgerTotal    BigInt @map("ledger_total")
+  discrepancy    BigInt @default(0)
+  matchedCount   Int    @default(0) @map("matched_count")
+  unmatchedCount Int    @default(0) @map("unmatched_count")
+
+  status         ApprovalStatus @default(PENDING)
+  reconciledById String?        @map("reconciled_by") @db.Uuid
+  reconciledAt   DateTime?      @map("reconciled_at")
+  notes          String?
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  @@unique([provider, settlementDate])
+  @@index([settlementDate])
+  @@map("payment_reconciliations")
+}
+
+// ---------------------------------------------------------------------------
+//  ASSESSMENT  (docs/03 §10 — scores, grades, GPA, progression)
+// ---------------------------------------------------------------------------
+
+/// One assessable component of an offering (CA, Test, Lab, Exam). The WEIGHTS
+/// are owned by the department (INV-11) and are NOT hardcoded at 30/70 — a
+/// laboratory course legitimately weights differently. Weights must sum to 100
+/// before scores can be submitted; that check lives in the service because a
+/// per-row CHECK cannot see its siblings.
+model AssessmentComponent {
+  id          String         @id @default(uuid()) @db.Uuid
+  offeringId  String         @map("offering_id") @db.Uuid
+  offering    CourseOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  key         String // CA, TEST_1, LAB, EXAM
+  label       String
+  // Percentage of the final mark this component contributes.
+  weight      Decimal        @db.Decimal(5, 2)
+  // The raw scale this component is marked out of (a test may be out of 20).
+  maxScore    Decimal        @map("max_score") @db.Decimal(6, 2)
+  sortOrder   Int            @default(0) @map("sort_order")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  createdById String?        @map("created_by") @db.Uuid
+
+  scoreEntries ScoreEntry[]
+
+  @@unique([offeringId, key])
+  @@index([offeringId])
+  @@map("assessment_components")
+}
+
+/// A raw component score for one student. DRAFT until explicitly submitted —
+/// autosaved work must never be mistaken for a submitted result. A blank is
+/// never a silent zero: `mark` records ABSENT/MEDICAL/MALPRACTICE explicitly,
+/// and that is what the transcript renders.
+model ScoreEntry {
+  id                 String              @id @default(uuid()) @db.Uuid
+  componentId        String              @map("component_id") @db.Uuid
+  component          AssessmentComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  // Points at the registration line, not the student: a score only exists for a
+  // student who was actually registered for that offering.
+  registrationLineId String              @map("registration_line_id") @db.Uuid
+
+  score Decimal?        @db.Decimal(6, 2) // null unless mark = SCORED
+  mark  ScoreMark       @default(SCORED)
+  state ScoreEntryState @default(DRAFT)
+
+  enteredById String?   @map("entered_by") @db.Uuid
+  enteredAt   DateTime  @default(now()) @map("entered_at")
+  submittedAt DateTime? @map("submitted_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@unique([componentId, registrationLineId])
+  @@index([registrationLineId])
+  @@map("score_entries")
+}
+
+/// The unit of result approval: one offering's results moving through the chain
+/// together (docs/03 §10.4). Batching is deliberate — Senate ratifies a course's
+/// results, not 300 individual rows. The grade scale is PINNED on the batch so
+/// the whole batch computes against one consistent scale.
+model ResultBatch {
+  id         String          @id @default(uuid()) @db.Uuid
+  offeringId String          @map("offering_id") @db.Uuid
+  offering   CourseOffering  @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+  sessionId  String          @map("session_id") @db.Uuid
+  session    AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  semesterId String          @map("semester_id") @db.Uuid
+  semester   Semester        @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+
+  gradeScaleId String     @map("grade_scale_id") @db.Uuid
+  gradeScale   GradeScale @relation(fields: [gradeScaleId], references: [id], onDelete: Restrict)
+
+  status ResultBatchStatus @default(DRAFT)
+
+  submittedAt       DateTime? @map("submitted_at")
+  ratifiedAt        DateTime? @map("ratified_at")
+  // Publication is DUAL-CONTROL (docs/03 §10.4): two distinct actors, because
+  // publishing a wrong result cannot be un-seen.
+  publishedAt       DateTime? @map("published_at")
+  publishedById     String?   @map("published_by") @db.Uuid
+  publishCosignerId String?   @map("publish_cosigner") @db.Uuid
+  rejectReason      String?   @map("reject_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  approvals    ResultApproval[]
+  gradeRecords GradeRecord[]
+
+  // One live batch per offering. A re-submission after rejection reuses the
+  // batch; a correction after publication is an amendment, not a second batch.
+  @@unique([offeringId])
+  @@index([sessionId, semesterId])
+  @@index([status])
+  @@map("result_batches")
+}
+
+/// One recorded decision in the result approval chain. Same shape and the same
+/// two rules as RegistrationApproval: no stage skipped, and no actor approving
+/// two consecutive stages.
+model ResultApproval {
+  id      String        @id @default(uuid()) @db.Uuid
+  batchId String        @map("batch_id") @db.Uuid
+  batch   ResultBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  stageId String        @map("stage_id") @db.Uuid
+  stage   ApprovalStage @relation(fields: [stageId], references: [id], onDelete: Restrict)
+
+  decision    ApprovalDecision
+  comment     String?
+  decidedById String           @map("decided_by") @db.Uuid
+  decidedAt   DateTime         @default(now()) @map("decided_at")
+
+  @@unique([batchId, stageId])
+  @@index([batchId])
+  @@map("result_approvals")
+}
+
+/// A student's grade in one course. IMMUTABLE once published (INV-12): a
+/// correction does NOT update this row, it inserts a new one with version+1 and
+/// stamps `supersededById` on the old one. The transcript reads only rows where
+/// superseded_by IS NULL (a partial index in guards.sql), so the full history
+/// stays queryable while the current truth stays cheap to fetch.
+///
+/// `countsTowardCgpa` is where Q-02 (dilution vs best-grade on a repeat) is
+/// expressed. No policy is baked in here: the assessment service sets the flag
+/// per the institution's configured rule, and BOTH attempts remain visible.
+model GradeRecord {
+  id                 String           @id @default(uuid()) @db.Uuid
+  studentRecordId    String           @map("student_record_id") @db.Uuid
+  studentRecord      StudentRecord    @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  // Many rows may reference one line over time — a superseded grade is RETAINED
+  // (INV-12), so the old row and its replacement both point here. Uniqueness is
+  // therefore conditional: at most one CURRENT grade per line, enforced by the
+  // partial index `uq_grade_current_per_line` in guards.sql, which Prisma cannot
+  // express (`WHERE superseded_by IS NULL`).
+  registrationLineId String           @map("registration_line_id") @db.Uuid
+  registrationLine   RegistrationLine @relation(fields: [registrationLineId], references: [id], onDelete: Restrict)
+
+  batchId    String?         @map("batch_id") @db.Uuid
+  batch      ResultBatch?    @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  offeringId String          @map("offering_id") @db.Uuid
+  offering   CourseOffering  @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+  // Denormalized so a transcript query does not traverse offering → course for
+  // every one of a graduate's ~50 rows.
+  courseId   String          @map("course_id") @db.Uuid
+  course     Course          @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  sessionId  String          @map("session_id") @db.Uuid
+  session    AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  semesterId String          @map("semester_id") @db.Uuid
+  semester   Semester        @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+
+  // total = Σ(component_score / component_max × weight), docs/03 §10.3.
+  totalScore   Decimal?   @map("total_score") @db.Decimal(6, 2)
+  grade        String? // letter from the pinned scale
+  gradePoint   Decimal?   @map("grade_point") @db.Decimal(3, 2)
+  creditUnits  Int        @map("credit_units") // copied, per INV-6
+  mark         ScoreMark  @default(SCORED)
+  // The scale IN FORCE when this was computed — pinned so a later scale
+  // revision cannot silently re-grade a graduate.
+  gradeScaleId String     @map("grade_scale_id") @db.Uuid
+  gradeScale   GradeScale @relation(fields: [gradeScaleId], references: [id], onDelete: Restrict)
+
+  // Whether this attempt feeds the CGPA (Q-02). A superseded repeat may remain
+  // visible on the transcript while excluded from the computation.
+  countsTowardCgpa Boolean @default(true) @map("counts_toward_cgpa")
+  isCarryover      Boolean @default(false) @map("is_carryover")
+
+  // -- Supersede chain (INV-12) ---------------------------------------------
+  version        Int          @default(1)
+  supersededById String?      @unique @map("superseded_by") @db.Uuid
+  supersededBy   GradeRecord? @relation("GradeSupersede", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     GradeRecord? @relation("GradeSupersede")
+
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  amendments ResultAmendment[]
+
+  @@index([studentRecordId, sessionId])
+  @@index([registrationLineId])
+  @@index([offeringId])
+  @@index([courseId])
+  @@index([batchId])
+  @@map("grade_records")
+}
+
+/// A post-publication correction (docs/03 §10.5). It never edits the published
+/// row; on approval it writes a NEW GradeRecord version and links the two. The
+/// requester and approver must differ — the same separation of duties that
+/// applies to identity amendments applies to marks.
+model ResultAmendment {
+  id            String      @id @default(uuid()) @db.Uuid
+  gradeRecordId String      @map("grade_record_id") @db.Uuid
+  gradeRecord   GradeRecord @relation(fields: [gradeRecordId], references: [id], onDelete: Cascade)
+
+  reason         String
+  // What the correction proposes; applied only on approval.
+  proposedScore  Decimal?   @map("proposed_score") @db.Decimal(6, 2)
+  proposedMark   ScoreMark? @map("proposed_mark")
+  evidenceFileId String?    @map("evidence_file_id") @db.Uuid
+
+  status                 ApprovalStatus @default(PENDING)
+  requestedById          String         @map("requested_by") @db.Uuid
+  approvedById           String?        @map("approved_by") @db.Uuid
+  decisionNote           String?        @map("decision_note")
+  decidedAt              DateTime?      @map("decided_at")
+  // The replacement row this amendment produced.
+  resultingGradeRecordId String?        @map("resulting_grade_record_id") @db.Uuid
+  createdAt              DateTime       @default(now()) @map("created_at")
+
+  @@index([gradeRecordId])
+  @@index([status])
+  @@map("result_amendments")
+}
+
+/// A result withheld from a student (unpaid fees, disciplinary, malpractice).
+/// Withholding is explicit and reversible, and the student is told a REASON —
+/// a silently missing result is indistinguishable from a system fault.
+model ResultWithholding {
+  id              String           @id @default(uuid()) @db.Uuid
+  studentRecordId String           @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord    @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  sessionId       String?          @map("session_id") @db.Uuid
+  session         AcademicSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  offeringId      String?          @map("offering_id") @db.Uuid
+  offering        CourseOffering?  @relation(fields: [offeringId], references: [id], onDelete: SetNull)
+
+  reason       String
+  status       WithholdingStatus @default(ACTIVE)
+  placedById   String?           @map("placed_by") @db.Uuid
+  placedAt     DateTime          @default(now()) @map("placed_at")
+  releasedById String?           @map("released_by") @db.Uuid
+  releasedAt   DateTime?         @map("released_at")
+
+  @@index([studentRecordId])
+  @@index([status])
+  @@map("result_withholdings")
+}
+
+/// A student's GPA for one semester, and the running CGPA at that point. These
+/// are DERIVED (INV-13) — the row is a materialised projection kept because
+/// transcripts and progression read it constantly, and it is recomputed (never
+/// hand-edited) whenever a grade is superseded.
+model SemesterGpa {
+  id              String          @id @default(uuid()) @db.Uuid
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  sessionId       String          @map("session_id") @db.Uuid
+  session         AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  semesterId      String          @map("semester_id") @db.Uuid
+  semester        Semester        @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+  level           Int
+
+  unitsRegistered       Int     @map("units_registered")
+  unitsPassed           Int     @map("units_passed")
+  // Total grade points = Σ(grade_point × credit_units) over counting records.
+  gradePoints           Decimal @map("grade_points") @db.Decimal(8, 2)
+  gpa                   Decimal @db.Decimal(4, 2)
+  // Cumulative through this semester, from the same counting rule.
+  cumulativeUnits       Int     @map("cumulative_units")
+  cumulativeGradePoints Decimal @map("cumulative_grade_points") @db.Decimal(10, 2)
+  cgpa                  Decimal @db.Decimal(4, 2)
+
+  computedAt DateTime @default(now()) @map("computed_at")
+
+  @@unique([studentRecordId, semesterId])
+  @@index([studentRecordId])
+  @@map("semester_gpas")
+}
+
+/// A configurable progression threshold (docs/03 §8.3). Thresholds are DATA —
+/// "CGPA below 1.00 for two consecutive sessions ⇒ withdraw" is an institutional
+/// policy that changes by Senate resolution, not by deployment.
+model ProgressionRule {
+  id                  String             @id @default(uuid()) @db.Uuid
+  // Null programme/curriculum ⇒ institution-wide default; a specific one
+  // overrides it, resolved most-specific-first.
+  programmeId         String?            @map("programme_id") @db.Uuid
+  programme           Programme?         @relation(fields: [programmeId], references: [id], onDelete: Cascade)
+  curriculumVersionId String?            @map("curriculum_version_id") @db.Uuid
+  curriculumVersion   CurriculumVersion? @relation(fields: [curriculumVersionId], references: [id], onDelete: Cascade)
+  level               Int?
+
+  name                String
+  outcome             ProgressionOutcome
+  // Thresholds; all optional so a rule expresses only what it constrains.
+  minCgpa             Decimal?           @map("min_cgpa") @db.Decimal(4, 2)
+  maxCgpa             Decimal?           @map("max_cgpa") @db.Decimal(4, 2)
+  minUnitsPassed      Int?               @map("min_units_passed")
+  maxCarryoverUnits   Int?               @map("max_carryover_units")
+  consecutiveSessions Int?               @map("consecutive_sessions")
+
+  // Lower number wins when several rules match.
+  priority  Int      @default(100)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  proposals ProgressionProposal[]
+
+  @@index([programmeId])
+  @@index([curriculumVersionId])
+  @@map("progression_rules")
+}
+
+/// What the engine PROPOSES for a student at end of session, and what a human
+/// decided. The engine never writes a status itself (docs/03 §8.3): an automated
+/// withdrawal triggered by a mis-keyed score is close to impossible to unwind
+/// once the student has been told. Approval is what moves the status, via
+/// StudentStatusHistory.
+model ProgressionProposal {
+  id              String          @id @default(uuid()) @db.Uuid
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  sessionId       String          @map("session_id") @db.Uuid
+  session         AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  fromLevel Int?               @map("from_level")
+  toLevel   Int?               @map("to_level")
+  outcome   ProgressionOutcome
+  // The rule that fired, and the numbers it fired on — so a student contesting
+  // the outcome gets an explanation, not "the system decided".
+  ruleId    String?            @map("rule_id") @db.Uuid
+  rule      ProgressionRule?   @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  rationale Json?
+
+  status       ProposalStatus @default(PROPOSED)
+  proposedAt   DateTime       @default(now()) @map("proposed_at")
+  decidedById  String?        @map("decided_by") @db.Uuid
+  decidedAt    DateTime?      @map("decided_at")
+  decisionNote String?        @map("decision_note")
+
+  @@unique([studentRecordId, sessionId])
+  @@index([sessionId, status])
+  @@map("progression_proposals")
+}
+
+// ---------------------------------------------------------------------------
+//  EXAMINATION  (docs/03 §12)
+// ---------------------------------------------------------------------------
+
+/// An examination period within a session/semester. Distinct from the EXAM
+/// calendar window: the window says when the period is open for scheduling and
+/// card issuance, this row is the period itself.
+model ExamPeriod {
+  id         String          @id @default(uuid()) @db.Uuid
+  sessionId  String          @map("session_id") @db.Uuid
+  session    AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  semesterId String          @map("semester_id") @db.Uuid
+  semester   Semester        @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+  name       String
+  startDate  DateTime        @map("start_date") @db.Date
+  endDate    DateTime        @map("end_date") @db.Date
+  isActive   Boolean         @default(true) @map("is_active")
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  schedules ExamSchedule[]
+  cards     ExamCard[]
+
+  @@unique([sessionId, semesterId, name])
+  @@index([sessionId, semesterId])
+  @@map("exam_periods")
+}
+
+/// A room. Capacity is real and binding — seat allocation must not overfill a
+/// hall, and an over-allocated venue is discovered on exam morning if it is not
+/// discovered here.
+model ExamVenue {
+  id        String   @id @default(uuid()) @db.Uuid
+  campusId  String?  @map("campus_id") @db.Uuid
+  campus    Campus?  @relation(fields: [campusId], references: [id], onDelete: SetNull)
+  name      String
+  code      String   @unique
+  capacity  Int
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  schedules   ExamSchedule[]
+  attendances ExamAttendance[]
+
+  @@index([campusId])
+  @@map("exam_venues")
+}
+
+/// A sitting: one offering, one venue, one time slot. Clash detection (a student
+/// double-booked, a venue double-booked) is a service concern because it is a
+/// query across rows, but the (venue, start) uniqueness that makes the worst
+/// case impossible is enforced here.
+model ExamSchedule {
+  id         String         @id @default(uuid()) @db.Uuid
+  periodId   String         @map("period_id") @db.Uuid
+  period     ExamPeriod     @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  offeringId String         @map("offering_id") @db.Uuid
+  offering   CourseOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  venueId    String?        @map("venue_id") @db.Uuid
+  venue      ExamVenue?     @relation(fields: [venueId], references: [id], onDelete: SetNull)
+
+  startsAt       DateTime @map("starts_at")
+  endsAt         DateTime @map("ends_at")
+  seatsAllocated Int      @default(0) @map("seats_allocated")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  attendances  ExamAttendance[]
+  invigilators ExamInvigilator[]
+  misconduct   MisconductCase[]
+
+  @@unique([offeringId, periodId])
+  @@index([periodId])
+  @@index([venueId, startsAt])
+  @@map("exam_schedules")
+}
+
+/// Permission to sit ONE course's exam. 1:1 with the registration line, which is
+/// how INV-10 becomes structural: no locked registration line ⇒ no row here ⇒
+/// no exam. Eligibility can be revoked (unpaid fees discovered late, a hold
+/// placed) without deleting the row, so the reason survives.
+model ExamEligibility {
+  id                 String           @id @default(uuid()) @db.Uuid
+  registrationLineId String           @unique @map("registration_line_id") @db.Uuid
+  registrationLine   RegistrationLine @relation(fields: [registrationLineId], references: [id], onDelete: Cascade)
+
+  isEligible    Boolean   @default(true) @map("is_eligible")
+  // Populated when isEligible is false; shown to the student verbatim.
+  blockedReason String?   @map("blocked_reason")
+  grantedAt     DateTime  @default(now()) @map("granted_at")
+  revokedById   String?   @map("revoked_by") @db.Uuid
+  revokedAt     DateTime? @map("revoked_at")
+
+  @@index([isEligible])
+  @@map("exam_eligibilities")
+}
+
+/// The student's admission ticket for a period. `verificationCode` is what the
+/// hall scanner checks; it is random, not derived from the matric number, so a
+/// card cannot be forged by pattern. Card issuance is gated on fee clearance and
+/// holds — the gates are re-evaluated at issue, never trusted from earlier.
+model ExamCard {
+  id              String        @id @default(uuid()) @db.Uuid
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  periodId        String        @map("period_id") @db.Uuid
+  period          ExamPeriod    @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  verificationCode String    @unique @map("verification_code")
+  documentId       String?   @map("document_id") @db.Uuid
+  // A card is invalidated (not deleted) when eligibility changes after issue.
+  isValid          Boolean   @default(true) @map("is_valid")
+  invalidatedAt    DateTime? @map("invalidated_at")
+  invalidReason    String?   @map("invalid_reason")
+  issuedAt         DateTime  @default(now()) @map("issued_at")
+  issuedById       String?   @map("issued_by") @db.Uuid
+
+  @@unique([studentRecordId, periodId])
+  @@index([periodId])
+  @@map("exam_cards")
+}
+
+/// Who actually sat. Recorded per sitting so an ABSENT here and an ABSENT mark
+/// on the score sheet can be reconciled — a student marked present in the hall
+/// but absent on the sheet is a discrepancy worth surfacing.
+model ExamAttendance {
+  id                 String       @id @default(uuid()) @db.Uuid
+  scheduleId         String       @map("schedule_id") @db.Uuid
+  schedule           ExamSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  // Points at the registration line, so attendance exists only for a registered
+  // student, and the join to the grade record is direct.
+  registrationLineId String       @map("registration_line_id") @db.Uuid
+
+  status     ExamAttendanceStatus @default(PRESENT)
+  seatNumber String?              @map("seat_number")
+  venueId    String?              @map("venue_id") @db.Uuid
+  venue      ExamVenue?           @relation(fields: [venueId], references: [id], onDelete: SetNull)
+
+  verificationMethod IdentityVerificationMethod @default(MANUAL) @map("verification_method")
+  recordedById       String?                    @map("recorded_by") @db.Uuid
+  recordedAt         DateTime                   @default(now()) @map("recorded_at")
+
+  @@unique([scheduleId, registrationLineId])
+  @@index([scheduleId])
+  @@map("exam_attendances")
+}
+
+model ExamInvigilator {
+  id          String       @id @default(uuid()) @db.Uuid
+  scheduleId  String       @map("schedule_id") @db.Uuid
+  schedule    ExamSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  staffUserId String       @map("staff_user_id") @db.Uuid
+  staffUser   User         @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  role        String       @default("INVIGILATOR") // CHIEF, INVIGILATOR
+  assignedAt  DateTime     @default(now()) @map("assigned_at")
+
+  @@unique([scheduleId, staffUserId])
+  @@index([staffUserId])
+  @@map("exam_invigilators")
+}
+
+/// An examination misconduct case (docs/03 §12.4). Modelled as a case with a
+/// lifecycle and an appeal, not a flag: the outcome affects a result and a
+/// status, so it needs due process and a record of who decided what.
+model MisconductCase {
+  id              String          @id @default(uuid()) @db.Uuid
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  scheduleId      String?         @map("schedule_id") @db.Uuid
+  schedule        ExamSchedule?   @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  offeringId      String?         @map("offering_id") @db.Uuid
+  offering        CourseOffering? @relation(fields: [offeringId], references: [id], onDelete: SetNull)
+
+  caseNumber      String           @unique @map("case_number")
+  description     String
+  // What the panel decided and what it does to the result/status.
+  status          MisconductStatus @default(REPORTED)
+  sanction        String?
+  // Set when the sanction changes the student's status; links to the history.
+  appliedStatusId String?          @map("applied_status_id") @db.Uuid
+
+  reportedById String    @map("reported_by") @db.Uuid
+  reportedAt   DateTime  @default(now()) @map("reported_at")
+  decidedById  String?   @map("decided_by") @db.Uuid
+  decidedAt    DateTime? @map("decided_at")
+  // An upheld case is appealable; the appeal outcome supersedes the decision.
+  appealNote   String?   @map("appeal_note")
+  appealedAt   DateTime? @map("appealed_at")
+
+  @@index([studentRecordId])
+  @@index([status])
+  @@map("misconduct_cases")
+}
+
+// ---------------------------------------------------------------------------
+//  CLEARANCE  (docs/03 §14.1 — every unit signs independently)
+// ---------------------------------------------------------------------------
+
+/// A unit that must sign off before a student can graduate/withdraw (library,
+/// bursary, hostel, department, ...). Configurable: an institution adds a unit
+/// by inserting a row, and `isMandatory` decides whether it can be waived.
+model ClearanceUnit {
+  id             String        @id @default(uuid()) @db.Uuid
+  key            String        @unique // LIBRARY, BURSARY, HOSTEL, DEPARTMENT, ...
+  label          String
+  description    String?
+  // The role whose holders may sign this unit's step.
+  requiredRoleId String?       @map("required_role_id") @db.Uuid
+  requiredRole   Role?         @relation(fields: [requiredRoleId], references: [id], onDelete: SetNull)
+  clearanceType  ClearanceType @default(GRADUATION) @map("clearance_type")
+  isMandatory    Boolean       @default(true) @map("is_mandatory")
+  sortOrder      Int           @default(0) @map("sort_order")
+  isActive       Boolean       @default(true) @map("is_active")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  steps ClearanceStep[]
+
+  @@map("clearance_units")
+}
+
+/// One student's clearance run. Steps are INDEPENDENT — a student is not blocked
+/// from the library queue because the bursary has not signed — and the request
+/// is complete only when every mandatory step is CLEARED or WAIVED.
+model ClearanceRequest {
+  id              String          @id @default(uuid()) @db.Uuid
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  sessionId       String          @map("session_id") @db.Uuid
+  session         AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  clearanceType   ClearanceType   @default(GRADUATION) @map("clearance_type")
+
+  // Derived from the steps; kept for cheap listing, recomputed on every step
+  // change rather than set by hand.
+  isComplete  Boolean   @default(false) @map("is_complete")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  steps ClearanceStep[]
+
+  @@unique([studentRecordId, sessionId, clearanceType])
+  @@index([sessionId])
+  @@map("clearance_requests")
+}
+
+/// One unit's verdict on one request. BLOCKED always carries a reason the
+/// student can act on; a waiver requires a distinct authoriser from the signer.
+model ClearanceStep {
+  id        String           @id @default(uuid()) @db.Uuid
+  requestId String           @map("request_id") @db.Uuid
+  request   ClearanceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  unitId    String           @map("unit_id") @db.Uuid
+  unit      ClearanceUnit    @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  status ClearanceStepStatus @default(PENDING)
+  // Required on BLOCKED — "you are not cleared" without a reason is useless.
+  note   String?
+
+  signedById  String?   @map("signed_by") @db.Uuid
+  signedAt    DateTime? @map("signed_at")
+  waivedById  String?   @map("waived_by") @db.Uuid
+  waivedAt    DateTime? @map("waived_at")
+  waiveReason String?   @map("waive_reason")
+
+  @@unique([requestId, unitId])
+  @@index([requestId])
+  @@index([status])
+  @@map("clearance_steps")
+}
+
+// ---------------------------------------------------------------------------
+//  GRADUATION  (docs/03 §14 — the terminal state, and the hardest to undo)
+// ---------------------------------------------------------------------------
+
+/// A student evaluated for graduation in a given session. The evaluation is
+/// re-runnable and its RESULT is data: `deficiencies` says exactly what is
+/// missing, so a student asking "why am I not on the list" gets an answer
+/// instead of a shrug. Evaluation refuses to run at all if the student has no
+/// pinned curriculum version (INV-7) — guessing the curriculum is worse than
+/// declining to evaluate.
+model GraduationCandidate {
+  id              String          @id @default(uuid()) @db.Uuid
+  studentRecordId String          @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord   @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+  sessionId       String          @map("session_id") @db.Uuid
+  session         AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  status GraduationCandidateStatus @default(EVALUATED)
+
+  // Requirement evaluation, all recomputable from grade records.
+  unitsRequired     Int      @map("units_required")
+  unitsEarned       Int      @map("units_earned")
+  finalCgpa         Decimal? @map("final_cgpa") @db.Decimal(4, 2)
+  // The classification (First Class, Second Class Upper, ...) as a configurable
+  // string — the bands differ by institution and by award.
+  classification    String?
+  // [{code, title, reason}] — outstanding courses / unmet requirements.
+  deficiencies      Json?
+  // Fee clearance is DERIVED (INV-16) but snapshotted here at evaluation so the
+  // Senate list is reproducible; the live check still runs at approval.
+  feeCleared        Boolean  @default(false) @map("fee_cleared")
+  clearanceComplete Boolean  @default(false) @map("clearance_complete")
+
+  evaluatedAt   DateTime @default(now()) @map("evaluated_at")
+  evaluatedById String?  @map("evaluated_by") @db.Uuid
+  // Set on DEFERRED/EXCLUDED, shown to the student.
+  note          String?
+
+  approval    SenateApproval?
+  listEntries GraduationListEntry[]
+
+  @@unique([studentRecordId, sessionId])
+  @@index([sessionId, status])
+  @@map("graduation_candidates")
+}
+
+/// Senate's ratification of one graduand. This row is where `graduationDate`
+/// lives, and it lives here ONCE (INV-18): a date duplicated onto the student
+/// record, the certificate and the transcript is a date that will eventually
+/// disagree with itself. Everything that needs the date reads it from here.
+///
+/// A row may not be created while any mandatory clearance step or outstanding
+/// requirement remains (INV-17) — checked in the service against the live
+/// clearance/deficiency state, not against the snapshot above.
+model SenateApproval {
+  id          String              @id @default(uuid()) @db.Uuid
+  candidateId String              @unique @map("candidate_id") @db.Uuid
+  candidate   GraduationCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  sessionId   String              @map("session_id") @db.Uuid
+  session     AcademicSession     @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  // THE graduation date. Single source of truth for certificates, transcripts,
+  // NYSC exports and verification responses.
+  graduationDate DateTime @map("graduation_date") @db.Date
+  // Final, ratified values — frozen at approval even though they are derivable,
+  // because a later grade amendment must not silently restate a conferred award.
+  finalCgpa      Decimal? @map("final_cgpa") @db.Decimal(4, 2)
+  classification String?
+
+  // Senate minute reference: the paper trail this row represents.
+  minuteReference String?  @map("minute_reference")
+  approvedById    String   @map("approved_by") @db.Uuid
+  approvedAt      DateTime @default(now()) @map("approved_at")
+  // Separation of duties: the clearance signer must not be the approver here
+  // (docs/02 §5.4), checked in the service.
+  cosignerId      String?  @map("cosigner_id") @db.Uuid
+
+  @@index([sessionId])
+  @@index([graduationDate])
+  @@map("senate_approvals")
+}
+
+/// The departmental list of approved graduates for a batch. Kept SEPARATE from
+/// the per-graduate Senate record on purpose (docs/03 §14.3): in practice these
+/// two are produced by different offices and DO diverge, and a system that
+/// models only one of them cannot show the discrepancy. Both are tracked; the
+/// difference is surfaced as an alert rather than silently reconciled.
+model GraduationList {
+  id           String          @id @default(uuid()) @db.Uuid
+  sessionId    String          @map("session_id") @db.Uuid
+  session      AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  departmentId String?         @map("department_id") @db.Uuid
+  department   Department?     @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  batchLabel   String          @map("batch_label")
+
+  // Finalised lists are frozen; a change after finalisation is a new list.
+  isFinalised   Boolean   @default(false) @map("is_finalised")
+  finalisedAt   DateTime? @map("finalised_at")
+  finalisedById String?   @map("finalised_by") @db.Uuid
+  documentId    String?   @map("document_id") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  entries    GraduationListEntry[]
+  senateList SenateListEntry[]
+
+  @@unique([sessionId, departmentId, batchLabel])
+  @@index([sessionId])
+  @@map("graduation_lists")
+}
+
+model GraduationListEntry {
+  id          String              @id @default(uuid()) @db.Uuid
+  listId      String              @map("list_id") @db.Uuid
+  list        GraduationList      @relation(fields: [listId], references: [id], onDelete: Cascade)
+  candidateId String              @map("candidate_id") @db.Uuid
+  candidate   GraduationCandidate @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  position    Int?
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  @@unique([listId, candidateId])
+  @@index([listId])
+  @@map("graduation_list_entries")
+}
+
+/// The NYSC-vetted Senate list, tracked alongside the graduation list so the two
+/// can be compared. `discrepancyNote` is populated by the comparison job when a
+/// name appears on one list and not the other.
+model SenateListEntry {
+  id                  String         @id @default(uuid()) @db.Uuid
+  listId              String         @map("list_id") @db.Uuid
+  list                GraduationList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  // Deliberately stored as supplied by the vetting office, NOT as a foreign key
+  // to a student record: a name that does not match any record is precisely the
+  // discrepancy this table exists to reveal.
+  matriculationNumber String         @map("matriculation_number")
+  fullName            String         @map("full_name")
+  nyscVetted          Boolean        @default(false) @map("nysc_vetted")
+  // Set when reconciliation matched (or failed to match) a student record.
+  studentRecordId     String?        @map("student_record_id") @db.Uuid
+  discrepancyNote     String?        @map("discrepancy_note")
+  createdAt           DateTime       @default(now()) @map("created_at")
+
+  @@unique([listId, matriculationNumber])
+  @@index([listId])
+  @@map("senate_list_entries")
+}
+
+/// An export to an external body (NYSC/NERD, NUC, ...). Exports go through an
+/// ExportTarget interface with a DRY RUN first (docs/03 §14.4): the file that
+/// would be sent is produced and reviewed before anything leaves the building.
+model ExportBatch {
+  id        String          @id @default(uuid()) @db.Uuid
+  target    String // NERD, NUC, ...
+  sessionId String          @map("session_id") @db.Uuid
+  session   AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  isDryRun          Boolean        @default(true) @map("is_dry_run")
+  status            ApprovalStatus @default(PENDING)
+  totalItems        Int            @default(0) @map("total_items")
+  failedItems       Int            @default(0) @map("failed_items")
+  // The generated payload, kept so what was sent is provable later.
+  fileId            String?        @map("file_id") @db.Uuid
+  file              StoredFile?    @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  // The external body's acknowledgement reference, when it returns one.
+  externalReference String?        @map("external_reference")
+
+  createdById String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  submittedAt DateTime? @map("submitted_at")
+
+  items ExportBatchItem[]
+
+  @@index([sessionId, target])
+  @@map("export_batches")
+}
+
+model ExportBatchItem {
+  id              String        @id @default(uuid()) @db.Uuid
+  batchId         String        @map("batch_id") @db.Uuid
+  batch           ExportBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  // The exact payload emitted for this student — the dry run and the real run
+  // must produce identical rows, and this is what proves it.
+  payload         Json?
+  isSuccessful    Boolean?      @map("is_successful")
+  errorMessage    String?       @map("error_message")
+
+  @@unique([batchId, studentRecordId])
+  @@index([batchId])
+  @@map("export_batch_items")
+}
+
+// ---------------------------------------------------------------------------
+//  CREDENTIALS  (docs/04 §13 — documents are the university's word, in writing)
+// ---------------------------------------------------------------------------
+
+/// A versioned document template. The version is part of the identity because a
+/// regenerated document must be BYTE-IDENTICAL (docs/04 §13.2): the same data
+/// plus the same template version must produce the same bytes, or the stored
+/// hash and the signature stop meaning anything.
+model DocumentTemplate {
+  id           String       @id @default(uuid()) @db.Uuid
+  documentType DocumentType @map("document_type")
+  version      Int
+  name         String
+  // The template body, or a storage key for a binary/asset-based template.
+  body         String?
+  templateKey  String?      @map("template_key")
+  isActive     Boolean      @default(true) @map("is_active")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  createdById  String?      @map("created_by") @db.Uuid
+
+  documents GeneratedDocument[]
+
+  @@unique([documentType, version])
+  @@map("document_templates")
+}
+
+/// An institution signing key. Keys ROTATE, and old PUBLIC keys are published
+/// FOREVER (docs/04 §13.4): a certificate issued in 2026 must still verify in
+/// 2050. Only the public half and a reference to the private half live here —
+/// private key material never touches the database.
+model SigningKey {
+  id            String @id @default(uuid()) @db.Uuid
+  keyVersion    Int    @unique @map("key_version")
+  algorithm     String @default("Ed25519")
+  publicKey     String @map("public_key")
+  // Handle into the KMS/secret store; never the key itself.
+  privateKeyRef String @map("private_key_ref")
+
+  activatedAt  DateTime  @default(now()) @map("activated_at")
+  // Retirement stops NEW signatures; it never invalidates existing ones.
+  retiredAt    DateTime? @map("retired_at")
+  // Set only on compromise, which DOES invalidate signatures made with it.
+  revokedAt    DateTime? @map("revoked_at")
+  revokeReason String?   @map("revoke_reason")
+
+  documents    GeneratedDocument[]
+  certificates CertificateIssuance[]
+
+  @@map("signing_keys")
+}
+
+/// A generated, signed document. `contentHash` is unique: identical content is
+/// the same document, which is what makes regeneration idempotent and
+/// verification meaningful. The bytes live in content-addressed object storage
+/// under object-lock; this row is the index, the signature and the provenance.
+///
+/// Supersession is explicit rather than destructive — a reissued transcript does
+/// not erase the one already in a student's hands, it marks it superseded so
+/// verification of the older copy reports exactly that.
+model GeneratedDocument {
+  id           String         @id @default(uuid()) @db.Uuid
+  documentType DocumentType   @map("document_type")
+  status       DocumentStatus @default(GENERATING)
+
+  studentRecordId String?        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord? @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+
+  templateId      String?           @map("template_id") @db.Uuid
+  template        DocumentTemplate? @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  // Denormalized copy of the template version actually rendered, so the row is
+  // self-describing even if the template is later archived.
+  templateVersion Int?              @map("template_version")
+
+  // SHA-256 of the produced bytes; the storage key is content-addressed from it.
+  contentHash String      @unique @map("content_hash")
+  fileId      String?     @map("file_id") @db.Uuid
+  file        StoredFile? @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  signature    String?     @db.Text
+  signingKeyId String?     @map("signing_key_id") @db.Uuid
+  signingKey   SigningKey? @relation(fields: [signingKeyId], references: [id], onDelete: Restrict)
+
+  // The immutable input snapshot this was rendered from. Without it a
+  // regenerated document could differ because the underlying data moved on.
+  payloadSnapshot Json? @map("payload_snapshot")
+
+  issuedAt       DateTime           @default(now()) @map("issued_at")
+  issuedById     String?            @map("issued_by") @db.Uuid
+  supersededById String?            @unique @map("superseded_by") @db.Uuid
+  supersededBy   GeneratedDocument? @relation("DocumentSupersede", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     GeneratedDocument? @relation("DocumentSupersede")
+  revokedAt      DateTime?          @map("revoked_at")
+  revokeReason   String?            @map("revoke_reason")
+
+  verificationCodes VerificationCode[]
+
+  @@index([studentRecordId])
+  @@index([documentType])
+  @@index([status])
+  @@map("generated_documents")
+}
+
+/// A public verification handle for a document (docs/04 §13.4). The code is
+/// RANDOM, never derived from the matriculation number — a guessable code is an
+/// enumeration hole over graduate records. `disclosureFields` implements
+/// selective disclosure: an employer verifying a certificate learns the award is
+/// genuine, not the graduate's entire transcript.
+model VerificationCode {
+  id               String            @id @default(uuid()) @db.Uuid
+  code             String            @unique
+  documentId       String            @map("document_id") @db.Uuid
+  document         GeneratedDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  // Which key version signed it. The QR encodes this, so a 2050 verifier knows
+  // which published public key to check against.
+  keyVersion       Int?              @map("key_version")
+  // Whitelist of fields the public endpoint is permitted to return.
+  disclosureFields Json?             @map("disclosure_fields")
+
+  isActive     Boolean   @default(true) @map("is_active")
+  expiresAt    DateTime? @map("expires_at")
+  // Verification attempts are counted; a spike is an enumeration signal.
+  viewCount    Int       @default(0) @map("view_count")
+  lastViewedAt DateTime? @map("last_viewed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([documentId])
+  @@map("verification_codes")
+}
+
+/// A student's request for a transcript (docs/03 §13.3). Requests are paid for,
+/// reviewed and dispatched, so the lifecycle is explicit rather than a boolean.
+/// The document types in §13.1 are sharply distinguished — a provisional
+/// transcript is NOT a final one, and conflating them is how a student ends up
+/// holding a document a foreign university rejects.
+model TranscriptRequest {
+  id              String        @id @default(uuid()) @db.Uuid
+  requestNumber   String        @unique @map("request_number")
+  studentRecordId String        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  documentType    DocumentType  @map("document_type")
+
+  status           TranscriptRequestStatus @default(SUBMITTED)
+  // Where it goes. A sealed transcript sent directly to a third party is the
+  // normal case, so the destination belongs to the request itself.
+  deliveryMethod   String                  @map("delivery_method") // PICKUP, POST, EMAIL, COURIER
+  recipientName    String?                 @map("recipient_name")
+  recipientEmail   String?                 @map("recipient_email")
+  recipientAddress String?                 @map("recipient_address")
+  copies           Int                     @default(1)
+
+  invoiceId  String? @map("invoice_id") @db.Uuid
+  documentId String? @map("document_id") @db.Uuid
+
+  requestedAt       DateTime  @default(now()) @map("requested_at")
+  reviewedById      String?   @map("reviewed_by") @db.Uuid
+  reviewedAt        DateTime? @map("reviewed_at")
+  generatedAt       DateTime? @map("generated_at")
+  dispatchedAt      DateTime? @map("dispatched_at")
+  dispatchReference String?   @map("dispatch_reference")
+  rejectReason      String?   @map("reject_reason")
+
+  @@index([studentRecordId])
+  @@index([status])
+  @@map("transcript_requests")
+}
+
+/// Issuance of a certificate. Separate from GeneratedDocument because a
+/// certificate is a physical, serially-numbered artefact with collection and
+/// replacement history; the PDF is only one representation of it.
+model CertificateIssuance {
+  id               String        @id @default(uuid()) @db.Uuid
+  studentRecordId  String        @map("student_record_id") @db.Uuid
+  studentRecord    StudentRecord @relation(fields: [studentRecordId], references: [id], onDelete: Restrict)
+  // Serial printed on the physical certificate; never reused, even on replacement.
+  serialNumber     String        @unique @map("serial_number")
+  // The graduation date is NOT copied here (INV-18) — it is read through this
+  // link to the Senate approval, which is its single home.
+  senateApprovalId String?       @map("senate_approval_id") @db.Uuid
+
+  documentId   String?     @map("document_id") @db.Uuid
+  signingKeyId String?     @map("signing_key_id") @db.Uuid
+  signingKey   SigningKey? @relation(fields: [signingKeyId], references: [id], onDelete: Restrict)
+
+  issuedAt      DateTime             @default(now()) @map("issued_at")
+  issuedById    String?              @map("issued_by") @db.Uuid
+  collectedAt   DateTime?            @map("collected_at")
+  collectedBy   String?              @map("collected_by")
+  // A replacement supersedes, never overwrites: the lost original stays on
+  // record so a recovered copy can be identified as void.
+  replacesId    String?              @unique @map("replaces_id") @db.Uuid
+  replaces      CertificateIssuance? @relation("CertificateReplacement", fields: [replacesId], references: [id], onDelete: SetNull)
+  replacedBy    CertificateIssuance? @relation("CertificateReplacement")
+  replaceReason String?              @map("replace_reason")
+  revokedAt     DateTime?            @map("revoked_at")
+
+  @@index([studentRecordId])
+  @@map("certificate_issuances")
+}
+
+// ---------------------------------------------------------------------------
+//  FILE STORAGE  (docs/04 §17 — never store bytes in the database)
+// ---------------------------------------------------------------------------
+
+/// The index for every uploaded or generated file. Bytes live in object storage;
+/// this row is the metadata, the integrity hash and the scan verdict.
+///
+/// Several defences are structural here:
+///   - `storageKey` is RANDOM, not derived from a filename or matric number, so
+///     a key cannot be guessed to reach another student's document.
+///   - `declaredMimeType` (what the client claimed) is kept apart from
+///     `detectedMimeType` (what the magic bytes say); the allowlist is checked
+///     against the DETECTED one.
+///   - `contentHash` deduplicates and detects tampering.
+///   - `encryptionKeyId` lets biometric templates use a SEPARATE key, so
+///     crypto-erasure of biometrics is possible without destroying everything.
+model StoredFile {
+  id         String    @id @default(uuid()) @db.Uuid
+  fileClass  FileClass @map("file_class")
+  // Random object key. Never predictable from user-visible data.
+  storageKey String    @unique @map("storage_key")
+  bucket     String?
+
+  originalFilename String  @map("original_filename")
+  declaredMimeType String  @map("declared_mime_type")
+  detectedMimeType String? @map("detected_mime_type")
+  sizeBytes        BigInt  @map("size_bytes")
+  contentHash      String  @map("content_hash")
+
+  scanStatus   FileScanStatus @default(PENDING) @map("scan_status")
+  scannedAt    DateTime?      @map("scanned_at")
+  scanResult   String?        @map("scan_result")
+  // Images have EXIF stripped on ingest — location data embedded in a student
+  // photo is a privacy leak nobody asked for. This records that it happened.
+  exifStripped Boolean        @default(false) @map("exif_stripped")
+
+  // Generated documents and audit anchors are written under object-lock, so not
+  // even an administrator can rewrite them.
+  isObjectLocked  Boolean @default(false) @map("is_object_locked")
+  // Separate key for biometric templates ⇒ crypto-erasure without collateral.
+  encryptionKeyId String? @map("encryption_key_id")
+
+  uploadedById String?   @map("uploaded_by") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at")
+  // Retention: set when the file becomes eligible for deletion, so a purge job
+  // never has to infer eligibility from creation dates and guesswork.
+  retainUntil  DateTime? @map("retain_until")
+  deletedAt    DateTime? @map("deleted_at")
+
+  applicationDocuments ApplicationDocument[]
+  importBatches        ImportBatch[]
+  generatedDocuments   GeneratedDocument[]
+  exportBatches        ExportBatch[]
+  reconciliations      PaymentReconciliation[]
+
+  @@index([fileClass])
+  @@index([contentHash])
+  @@index([scanStatus])
+  @@map("stored_files")
+}
+
+// ---------------------------------------------------------------------------
+//  NOTIFICATIONS  (docs/04 §18)
+// ---------------------------------------------------------------------------
+
+/// A message template per (event, channel). Templates are DATA so wording can be
+/// fixed without a deployment, and versioned so what was sent can be
+/// reconstructed later.
+model NotificationTemplate {
+  id        String              @id @default(uuid()) @db.Uuid
+  eventKey  String              @map("event_key") // registration.approved, result.published, ...
+  channel   NotificationChannel
+  version   Int                 @default(1)
+  subject   String?
+  body      String
+  isActive  Boolean             @default(true) @map("is_active")
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+
+  dispatches NotificationDispatch[]
+
+  @@unique([eventKey, channel, version])
+  @@map("notification_templates")
+}
+
+/// Which channels fire for an event, and whether the recipient may opt out. Some
+/// notifications are NOT optional (a disciplinary summons, a result withholding),
+/// which is why `isMandatory` exists rather than a single global preference.
+model NotificationRule {
+  id          String              @id @default(uuid()) @db.Uuid
+  eventKey    String              @map("event_key")
+  channel     NotificationChannel
+  isMandatory Boolean             @default(false) @map("is_mandatory")
+  isActive    Boolean             @default(true) @map("is_active")
+  // Quiet-hours / batching policy, so the system does not SMS a student at 3am.
+  policy      Json?
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  @@unique([eventKey, channel])
+  @@map("notification_rules")
+}
+
+/// The in-app notification itself. Addressed to a user OR to a student record —
+/// a student record may exist with no user account (INV-5), and a notification
+/// about an unactivated record still needs somewhere to live.
+model Notification {
+  id              String         @id @default(uuid()) @db.Uuid
+  userId          String?        @map("user_id") @db.Uuid
+  user            User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studentRecordId String?        @map("student_record_id") @db.Uuid
+  studentRecord   StudentRecord? @relation(fields: [studentRecordId], references: [id], onDelete: Cascade)
+
+  eventKey String  @map("event_key")
+  title    String
+  body     String
+  // Deep link into the app (the registration, the result, the invoice).
+  linkPath String? @map("link_path")
+  // Structured payload for rendering; never contains secrets.
+  data     Json?
+
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  dispatches NotificationDispatch[]
+
+  @@index([userId, readAt])
+  @@index([studentRecordId])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+/// One delivery attempt on one channel. Kept apart from Notification because
+/// delivery FAILS: an SMS bounces, an email is suppressed, a push token expires.
+/// Retries and provider references belong to the attempt, not to the message.
+/// Partitioned by time from day one (docs/02 §3.5) — after audit_events this is
+/// the highest-volume table in the system.
+model NotificationDispatch {
+  id             String                @id @default(uuid()) @db.Uuid
+  notificationId String?               @map("notification_id") @db.Uuid
+  notification   Notification?         @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  templateId     String?               @map("template_id") @db.Uuid
+  template       NotificationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  channel     NotificationChannel
+  // The resolved destination AT SEND TIME. An email address changes later; what
+  // matters in a delivery dispute is where the message actually went.
+  destination String
+  status      DispatchStatus      @default(QUEUED)
+
+  provider          String?
+  providerReference String? @map("provider_reference")
+  attemptCount      Int     @default(0) @map("attempt_count")
+  lastError         String? @map("last_error")
+
+  queuedAt    DateTime  @default(now()) @map("queued_at")
+  sentAt      DateTime? @map("sent_at")
+  deliveredAt DateTime? @map("delivered_at")
+  failedAt    DateTime? @map("failed_at")
+
+  @@index([notificationId])
+  @@index([status, queuedAt])
+  @@index([queuedAt])
+  @@map("notification_dispatches")
+}

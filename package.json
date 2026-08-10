@@ -1,0 +1,30 @@
+{
+  "name": "eportal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "University ePortal — Phase 1: Foundation, Identity, Authentication & RBAC",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "api:dev": "npm --workspace apps/api run start:dev",
+    "api:build": "npm --workspace apps/api run build",
+    "api:test": "npm --workspace apps/api run test",
+    "api:test:e2e": "npm --workspace apps/api run test:e2e",
+    "api:lint": "npm --workspace apps/api run lint",
+    "web:dev": "npm --workspace apps/web run dev",
+    "web:build": "npm --workspace apps/web run build",
+    "web:lint": "npm --workspace apps/web run lint",
+    "prisma:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema apps/api/prisma/schema.prisma",
+    "prisma:deploy": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
+    "prisma:status": "prisma migrate status --schema apps/api/prisma/schema.prisma",
+    "db:guards": "node scripts/run-sql.js apps/api/prisma/guards.sql",
+    "db:verify": "node scripts/run-sql.js --as-app apps/api/prisma/guards.verify.sql",
+    "seed": "npm --workspace apps/api run seed"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
