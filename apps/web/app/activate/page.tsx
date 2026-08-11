@@ -12,6 +12,12 @@
  *   edited here, and the password is deliberately NOT set here: it is chosen at
  *   the forced change after the student's first sign-in.
  *
+ * Because that reply is generic, a 200 does NOT mean the account was created: a
+ * wrong date of birth returns the same body as a success. The confirmation panel
+ * therefore states only what the API guarantees ("if your details match…") and
+ * points at the two factors a student can get wrong, rather than asserting
+ * "activated" and stranding them at a sign-in that rejects them.
+ *
  * Email verification is currently disabled (the OTP step is skipped server-side
  * when the STUDENT_ACTIVATION_REQUIRE_EMAIL_OTP flag is off). The API still
  * reports emailVerificationRequired, so this page can grow the OTP step back
@@ -74,10 +80,35 @@ export default function ActivatePage() {
         <div className="card p-6">
           {done ? (
             <div className="space-y-4">
-              <Alert kind="success" title="Account activated">
-                Your student account is ready. Sign in with your <strong>matriculation number</strong>{' '}
-                and the initial password <strong>issued with your admission letter</strong> (your
-                surname). You will be asked to set a permanent password on first sign-in.
+              {/*
+                Deliberately NOT a green "Account activated" confirmation. The API
+                answers identically whether the details matched or not (see
+                GENERIC_ACTIVATE), so this page cannot know which happened — and
+                claiming success after a mistyped date of birth sends the student
+                to a sign-in that rejects them with no idea why. The copy below
+                promises only what the API actually guarantees, and names the
+                likely culprits so a failed sign-in is self-diagnosable.
+              */}
+              <Alert kind="info" title="Check your details">
+                <p>
+                  If the details you entered match our records, your account is now ready. Sign in
+                  with your <strong>matriculation number</strong> and the initial password{' '}
+                  <strong>issued with your admission letter</strong> (your surname). You will be
+                  asked to set a permanent password on first sign-in.
+                </p>
+                <p className="mt-2">
+                  If sign-in does not work, your date of birth or surname may not match your
+                  admission record. Re-check them and try again, or contact the registry.
+                </p>
+              </Alert>
+              {/*
+                The attempt counter is per-record and shared with the sign-in-free
+                activation path, so repeated mistypes lock the record for 15
+                minutes. Warning up front turns a silent dead end into a choice.
+              */}
+              <Alert kind="warning">
+                Repeated attempts with details that do not match will temporarily lock activation
+                for 15 minutes.
               </Alert>
               <button className="btn-primary w-full" onClick={() => router.replace('/login')}>
                 Go to sign in
