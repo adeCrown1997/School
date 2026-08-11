@@ -25,6 +25,7 @@ function principal(
     fullName: 'Officer',
     permissions: [...new Set(scopedPermissions.map((s) => s.permission))],
     scopedPermissions,
+    mustChangePassword: false,
   };
 }
 

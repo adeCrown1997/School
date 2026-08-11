@@ -28,6 +28,23 @@ const EnvSchema = z.object({
   OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
   MAX_ACTIVATION_ATTEMPTS: z.coerce.number().int().positive().default(5),
 
+  /**
+   * Email verification during student activation. OFF by default: the
+   * institution activates students who may not yet have a reachable address on
+   * file, so requiring an emailed OTP would lock them out of their own portal.
+   * The OTP flow is fully retained in the code — set this to true to re-enable
+   * it without a deploy of new logic.
+   *
+   * The identity challenge is NOT weakened by this: activation still requires
+   * matriculation number + date of birth + surname checked against the master
+   * record, and the account it creates can only reach a forced password change
+   * until the student sets their own password.
+   */
+  STUDENT_ACTIVATION_REQUIRE_EMAIL_OTP: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
   BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(12).optional(),
   BOOTSTRAP_ADMIN_NAME: z.string().default('System Administrator'),

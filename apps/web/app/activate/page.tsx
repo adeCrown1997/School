@@ -2,114 +2,59 @@
 
 /**
  * STUDENT ACTIVATION — the only way a student obtains a login, and it works
- * strictly against a PRE-EXISTING official record. Three steps:
+ * strictly against a PRE-EXISTING official record. A single step:
  *
- *   1. Identify: matriculation number + date of birth + surname. The API replies
- *      generically ("if your details match…") so this page CANNOT be used to
- *      discover which matric numbers exist — we always advance to step 2.
- *   2. Verify: the 6-digit OTP delivered to the email ON FILE (never entered
- *      here). On success the API returns a single-use continuation token.
- *   3. Set password: create the account password. The API links the new login to
- *      the existing record; identity itself is never created or edited here.
+ *   Identify: matriculation number + date of birth + surname. If the three match
+ *   a PENDING record, the API creates the login and issues the student's SURNAME
+ *   as the initial password, flagged "must change". The API replies generically
+ *   ("if your details match…") so this page cannot be used to discover which
+ *   matric numbers exist, and it never invents identity — no field is created or
+ *   edited here, and the password is deliberately NOT set here: it is chosen at
+ *   the forced change after the student's first sign-in.
  *
- * This page never invents identity — every field the university owns is
- * displayed nowhere and editable nowhere. It only proves possession of the
- * enrolment factors + the on-file email.
+ * Email verification is currently disabled (the OTP step is skipped server-side
+ * when the STUDENT_ACTIVATION_REQUIRE_EMAIL_OTP flag is off). The API still
+ * reports emailVerificationRequired, so this page can grow the OTP step back
+ * without the activation flow changing.
  */
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
 import { Alert, Field } from '@/components/ui';
-
-type Step = 1 | 2 | 3 | 4;
+import type { ActivationResult } from '@/lib/types';
 
 export default function ActivatePage() {
   const router = useRouter();
-  const [step, setStep] = useState<Step>(1);
-  const [error, setError] = useState<string | null>(null);
-  const [details, setDetails] = useState<string[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-
-  // Step 1 fields
   const [matric, setMatric] = useState('');
   const [dob, setDob] = useState('');
   const [surname, setSurname] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [details, setDetails] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
 
-  // Step 2/3 carriers
-  const [otp, setOtp] = useState('');
-  const [continuationToken, setContinuationToken] = useState('');
-
-  // Step 3 fields
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-
-  function fail(err: unknown, fallback: string) {
-    if (err instanceof ApiError) {
-      setError(err.message);
-      setDetails(err.details ?? []);
-    } else {
-      setError(fallback);
-      setDetails([]);
-    }
-  }
-
-  async function submitIdentify(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setDetails([]);
     setSubmitting(true);
     try {
-      // Response is intentionally generic; we advance regardless of match.
-      await api.post('/students/activate/identify', {
+      // The response is intentionally generic; we advance regardless of match.
+      await api.post<ActivationResult>('/students/activate', {
         matriculationNumber: matric.trim(),
         dateOfBirth: dob,
         surname: surname.trim(),
       });
-      setStep(2);
+      setDone(true);
     } catch (err) {
-      fail(err, 'Something went wrong. Please try again.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitVerify(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setDetails([]);
-    setSubmitting(true);
-    try {
-      const data = await api.post<{ continuationToken: string; expiresInSec: number }>(
-        '/students/activate/verify',
-        { matriculationNumber: matric.trim(), otp: otp.trim() },
-      );
-      setContinuationToken(data.continuationToken);
-      setStep(3);
-    } catch (err) {
-      fail(err, 'The verification code is invalid or has expired.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitPassword(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setDetails([]);
-    if (password !== confirm) {
-      setError('The two passwords do not match.');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.post('/students/activate/set-password', {
-        continuationToken,
-        password,
-      });
-      setStep(4);
-    } catch (err) {
-      fail(err, 'Unable to set your password. Please start again.');
+      if (err instanceof ApiError) {
+        setError(err.message);
+        setDetails(err.details ?? []);
+      } else {
+        setError('Something went wrong. Please try again.');
+        setDetails([]);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -126,123 +71,66 @@ export default function ActivatePage() {
           </p>
         </div>
 
-        <Stepper current={step} />
-
-        <div className="card mt-4 p-6">
-          {error ? (
-            <div className="mb-4">
-              <Alert kind="error">
-                <p>{error}</p>
-                {details.length ? (
-                  <ul className="mt-1 list-disc pl-5">
-                    {details.map((d) => (
-                      <li key={d}>{d}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </Alert>
-            </div>
-          ) : null}
-
-          {step === 1 ? (
-            <form onSubmit={submitIdentify} className="space-y-4" noValidate>
-              <Field
-                label="Matriculation number"
-                required
-                value={matric}
-                onChange={(e) => setMatric(e.target.value)}
-                autoComplete="off"
-              />
-              <Field
-                label="Date of birth"
-                type="date"
-                required
-                value={dob}
-                onChange={(e) => setDob(e.target.value)}
-              />
-              <Field
-                label="Surname"
-                required
-                value={surname}
-                onChange={(e) => setSurname(e.target.value)}
-                autoComplete="off"
-              />
-              <button type="submit" className="btn-primary w-full" disabled={submitting}>
-                {submitting ? 'Checking…' : 'Continue'}
-              </button>
-            </form>
-          ) : null}
-
-          {step === 2 ? (
-            <form onSubmit={submitVerify} className="space-y-4" noValidate>
-              <Alert kind="info">
-                If your details matched our records, a 6-digit verification code has been sent to the
-                email address the university has on file. Enter it below.
-              </Alert>
-              <Field
-                label="Verification code"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={6}
-                required
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-                autoComplete="one-time-code"
-              />
-              <button type="submit" className="btn-primary w-full" disabled={submitting}>
-                {submitting ? 'Verifying…' : 'Verify code'}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary w-full"
-                onClick={() => {
-                  setStep(1);
-                  setOtp('');
-                  setError(null);
-                }}
-              >
-                Start over
-              </button>
-            </form>
-          ) : null}
-
-          {step === 3 ? (
-            <form onSubmit={submitPassword} className="space-y-4" noValidate>
-              <Alert kind="success">Code verified. Choose a password to finish.</Alert>
-              <Field
-                label="Password"
-                type="password"
-                autoComplete="new-password"
-                required
-                hint="At least 12 characters, mixing upper/lower case, a number and a symbol."
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              <Field
-                label="Confirm password"
-                type="password"
-                autoComplete="new-password"
-                required
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-              />
-              <button type="submit" className="btn-primary w-full" disabled={submitting}>
-                {submitting ? 'Finishing…' : 'Activate account'}
-              </button>
-            </form>
-          ) : null}
-
-          {step === 4 ? (
+        <div className="card p-6">
+          {done ? (
             <div className="space-y-4">
               <Alert kind="success" title="Account activated">
-                Your student account is ready. You can now sign in with your official email and the
-                password you just set.
+                Your student account is ready. Sign in with your <strong>matriculation number</strong>{' '}
+                and the initial password <strong>issued with your admission letter</strong> (your
+                surname). You will be asked to set a permanent password on first sign-in.
               </Alert>
               <button className="btn-primary w-full" onClick={() => router.replace('/login')}>
                 Go to sign in
               </button>
             </div>
-          ) : null}
+          ) : (
+            <>
+              {error ? (
+                <div className="mb-4">
+                  <Alert kind="error">
+                    <p>{error}</p>
+                    {details.length ? (
+                      <ul className="mt-1 list-disc pl-5">
+                        {details.map((d) => (
+                          <li key={d}>{d}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </Alert>
+                </div>
+              ) : null}
+
+              <form onSubmit={submit} className="space-y-4" noValidate>
+                <Field
+                  label="Matriculation number"
+                  required
+                  autoCapitalize="characters"
+                  placeholder="AGE/2021/001"
+                  hint="Format: PREFIX/YEAR/SEQUENCE, for example AGE/2021/001."
+                  value={matric}
+                  onChange={(e) => setMatric(e.target.value)}
+                  autoComplete="off"
+                />
+                <Field
+                  label="Date of birth"
+                  type="date"
+                  required
+                  value={dob}
+                  onChange={(e) => setDob(e.target.value)}
+                />
+                <Field
+                  label="Surname"
+                  required
+                  value={surname}
+                  onChange={(e) => setSurname(e.target.value)}
+                  autoComplete="off"
+                />
+                <button type="submit" className="btn-primary w-full" disabled={submitting}>
+                  {submitting ? 'Checking…' : 'Activate account'}
+                </button>
+              </form>
+            </>
+          )}
         </div>
 
         <p className="mt-4 text-center text-sm">
@@ -252,35 +140,5 @@ export default function ActivatePage() {
         </p>
       </div>
     </main>
-  );
-}
-
-function Stepper({ current }: { current: Step }) {
-  const steps = ['Identify', 'Verify', 'Set password'];
-  return (
-    <ol className="flex items-center justify-center gap-2" aria-label="Activation progress">
-      {steps.map((label, i) => {
-        const n = (i + 1) as Step;
-        const active = current === n;
-        const done = current > n;
-        return (
-          <li key={label} className="flex items-center gap-2">
-            <span
-              className={`badge ${
-                done
-                  ? 'bg-green-100 text-green-800'
-                  : active
-                    ? 'bg-brand-100 text-brand-800'
-                    : 'bg-slate-100 text-slate-500'
-              }`}
-              aria-current={active ? 'step' : undefined}
-            >
-              {done ? '✓' : n}. {label}
-            </span>
-            {i < steps.length - 1 ? <span aria-hidden className="text-slate-300">→</span> : null}
-          </li>
-        );
-      })}
-    </ol>
   );
 }

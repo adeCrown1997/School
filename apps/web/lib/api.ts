@@ -28,6 +28,8 @@ export class ApiError extends Error {
     message: string,
     /** Field-level or list messages from the API validation layer, if any. */
     readonly details?: string[],
+    /** Machine-readable code from the API envelope, e.g. PASSWORD_CHANGE_REQUIRED. */
+    readonly code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -46,10 +48,10 @@ interface RequestOptions {
 
 /** Extract a human message + optional detail list from an API error payload. */
 function parseError(status: number, payload: unknown): ApiError {
-  // The API's exception filter emits `{ ok:false, error:{ message, details? } }`
+  // The API's exception filter emits `{ ok:false, error:{ code, message, details? } }`
   // (Nest's default is `{ message, ... }`). Handle both defensively.
   const p = payload as
-    | { error?: { message?: string; details?: unknown }; message?: unknown }
+    | { error?: { code?: unknown; message?: string; details?: unknown }; message?: unknown }
     | undefined;
   const rawMessage = p?.error?.message ?? p?.message;
   const message =
@@ -60,7 +62,22 @@ function parseError(status: number, payload: unknown): ApiError {
         : `Request failed (${status})`;
   const rawDetails = p?.error?.details ?? (Array.isArray(p?.message) ? p?.message : undefined);
   const details = Array.isArray(rawDetails) ? rawDetails.map(String) : undefined;
-  return new ApiError(status, message, details);
+  const code = typeof p?.error?.code === 'string' ? p.error.code : undefined;
+  return new ApiError(status, message, details, code);
+}
+
+/**
+ * The API blocks every route while a password change is pending. If that reaches
+ * the client mid-session (a stale tab, a direct URL), send the user to the one
+ * page that can clear the state rather than showing an "access denied" dead end.
+ * A hard navigation, not a router push, because this can fire from anywhere —
+ * including outside a React render tree.
+ */
+function redirectIfPasswordChangeRequired(err: ApiError): void {
+  if (err.code !== 'PASSWORD_CHANGE_REQUIRED') return;
+  if (typeof window === 'undefined') return;
+  if (window.location.pathname === '/change-password') return;
+  window.location.assign('/change-password');
 }
 
 async function raw<T>(path: string, opts: RequestOptions = {}): Promise<ApiEnvelope<T>> {
@@ -99,7 +116,11 @@ async function raw<T>(path: string, opts: RequestOptions = {}): Promise<ApiEnvel
     }
   }
 
-  if (!res.ok) throw parseError(res.status, json);
+  if (!res.ok) {
+    const err = parseError(res.status, json);
+    redirectIfPasswordChangeRequired(err);
+    throw err;
+  }
   return (json as ApiEnvelope<T>) ?? ({ ok: true, data: undefined as T });
 }
 

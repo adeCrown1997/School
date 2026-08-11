@@ -40,6 +40,7 @@ const globalActor: AuthPrincipal = {
   fullName: 'Registry',
   permissions: ['offerings.manage'],
   scopedPermissions: [{ permission: 'offerings.manage', scope: { scopeType: 'GLOBAL' } }],
+  mustChangePassword: false,
 };
 
 /** An HOD confined to one department — the scope-narrowing case. */
@@ -52,6 +53,7 @@ const hod = (departmentId: string): AuthPrincipal => ({
   scopedPermissions: [
     { permission: 'offerings.manage', scope: { scopeType: 'DEPARTMENT', departmentId } },
   ],
+  mustChangePassword: false,
 });
 
 const openSemester = {

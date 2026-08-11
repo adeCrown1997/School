@@ -36,6 +36,7 @@ const student = (studentRecordId: string | null): AuthPrincipal => ({
   permissions: [],
   scopedPermissions: [],
   studentRecordId,
+  mustChangePassword: false,
 });
 
 const registrar: AuthPrincipal = {
@@ -45,6 +46,7 @@ const registrar: AuthPrincipal = {
   fullName: 'Registrar',
   permissions: ['change_requests.review'],
   scopedPermissions: [{ permission: 'change_requests.review', scope: { scopeType: 'GLOBAL' } }],
+  mustChangePassword: false,
 };
 
 const ctx = { ip: '127.0.0.1', userAgent: 'jest' };

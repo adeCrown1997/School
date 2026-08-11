@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
@@ -14,6 +14,13 @@ import {
 } from 'class-validator';
 import { EntryMode, Gender } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/pagination';
+import {
+  MATRIC_FORMAT_MESSAGE,
+  MATRIC_MAX_LENGTH,
+  MATRIC_MIN_LENGTH,
+  MATRIC_PATTERN,
+  normalizeMatriculationNumber,
+} from '../matriculation';
 
 /**
  * ADMIN create-student payload. The administrator/registry IS the source of
@@ -28,11 +35,20 @@ import { PaginationQueryDto } from '../../common/pagination';
  * from anything a STUDENT provides.
  */
 export class CreateStudentDto {
+  /**
+   * PREFIX/YEAR/SEQUENCE — see matriculation.ts. The pattern is ENFORCED (not
+   * merely documented) because this value is also the student's login id.
+   *
+   * Normalized before validation so "age / 2021 / 001" is accepted and stored as
+   * AGE/2021/001: the DB uniqueness index is case-insensitive, so the canonical
+   * form has to be what reaches the database.
+   */
   @IsString()
-  @Length(3, 32)
-  @Matches(/^[A-Za-z0-9/\-.]+$/, {
-    message: 'Matriculation number contains invalid characters',
-  })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? normalizeMatriculationNumber(value) : value,
+  )
+  @Length(MATRIC_MIN_LENGTH, MATRIC_MAX_LENGTH, { message: MATRIC_FORMAT_MESSAGE })
+  @Matches(MATRIC_PATTERN, { message: MATRIC_FORMAT_MESSAGE })
   matriculationNumber!: string;
 
   @IsOptional()

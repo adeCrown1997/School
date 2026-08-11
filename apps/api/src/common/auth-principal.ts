@@ -29,6 +29,18 @@ export interface AuthPrincipal {
   scopedPermissions: Array<{ permission: string; scope: AuthScope }>;
   /** Linked student record id, present only for activated student accounts. */
   studentRecordId?: string | null;
+  /**
+   * The student's matriculation number — their login identifier. Read-only here:
+   * it is sourced from the master record on every request, never from the token,
+   * and no route lets a student write it.
+   */
+  matriculationNumber?: string | null;
+  /**
+   * True while the account still holds the initial password issued at
+   * activation. Resolved from the DB on every request (not from the token), so
+   * clearing it takes effect immediately rather than at token expiry.
+   */
+  mustChangePassword: boolean;
 }
 
 /** Shape of the signed JWT access-token payload. */

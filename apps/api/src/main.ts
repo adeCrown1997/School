@@ -10,6 +10,7 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { ResponseEnvelopeInterceptor } from './common/response.interceptor';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './auth/permissions.guard';
+import { PasswordChangeGuard } from './auth/password-change.guard';
 import { PrismaService } from './prisma/prisma.service';
 
 /**
@@ -52,7 +53,14 @@ async function bootstrap() {
   // @Public()/@RequirePermissions, this makes "secure by default" the norm —
   // a new endpoint is protected unless a developer explicitly opts out.
   const reflector = app.get(Reflector);
-  app.useGlobalGuards(app.get(JwtAuthGuard), new PermissionsGuard(reflector));
+  app.useGlobalGuards(
+    app.get(JwtAuthGuard),
+    // Between authentication and authorization: an account still holding its
+    // initial password is barred from everything except reading its own session,
+    // changing the password, and signing out.
+    new PasswordChangeGuard(reflector),
+    new PermissionsGuard(reflector),
+  );
 
   // Graceful shutdown closes the DB pool.
   const prisma = app.get(PrismaService);

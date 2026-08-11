@@ -12,6 +12,11 @@ import { sha256 } from '../../common/crypto.util';
 import { PERMISSIONS } from '../../rbac/permissions.catalog';
 import { assertWithinScope, ScopeConstraint, scopeConstraintFor } from '../../rbac/scope.util';
 import { StudentMasterInput, StudentsService } from '../students.service';
+import {
+  MATRIC_FORMAT_MESSAGE,
+  isValidMatriculationNumber,
+  normalizeMatriculationNumber,
+} from '../matriculation';
 import { ImportColumn, parseImportFile, RawRow } from './import-parse.util';
 import { ImportCommitDto } from './dto/import.dto';
 
@@ -239,8 +244,10 @@ export class StudentImportService {
     const scope = scopeConstraintFor(actor, PERMISSIONS.STUDENTS_IMPORT);
 
     // Preload existing matrics for the whole file in one query (DB duplicates).
+    // Normalized to the canonical form so the lookup matches what resolveRow()
+    // will compare against.
     const fileMatrics = rows
-      .map((r) => r.values.matriculationNumber?.trim())
+      .map((r) => normalizeMatriculationNumber(r.values.matriculationNumber ?? ''))
       .filter((m): m is string => !!m);
     const existing = fileMatrics.length
       ? await this.prisma.studentRecord.findMany({
@@ -308,10 +315,11 @@ export class StudentImportService {
     const v = row.values;
     const get = (c: ImportColumn) => (v[c] ?? '').trim();
 
-    const matric = get('matriculationNumber');
+    const matric = normalizeMatriculationNumber(get('matriculationNumber'));
     const surname = get('surname');
     const firstName = get('firstName');
     if (!matric) errors.push('Matriculation number is required');
+    else if (!isValidMatriculationNumber(matric)) errors.push(MATRIC_FORMAT_MESSAGE);
     if (!surname) errors.push('Surname is required');
     if (!firstName) errors.push('First name is required');
 

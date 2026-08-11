@@ -29,6 +29,10 @@ export class RbacService {
             },
           },
         },
+        // Student portal: the principal needs the master record's matriculation
+        // number (the student's login id) and the live mustChangePassword flag,
+        // neither of which is trusted to sit in a token.
+        studentRecord: { select: { matriculationNumber: true } },
       },
     });
     if (!user || !user.isActive) return null;
@@ -57,6 +61,8 @@ export class RbacService {
       permissions: [...permissionSet],
       scopedPermissions,
       studentRecordId: user.studentRecordId,
+      matriculationNumber: user.studentRecord?.matriculationNumber ?? null,
+      mustChangePassword: user.mustChangePassword,
     };
   }
 

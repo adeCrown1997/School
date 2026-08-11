@@ -7,9 +7,22 @@ import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-valid
  * and rejects unexpected properties, so a client cannot smuggle extra fields.
  */
 export class LoginDto {
-  @IsEmail({}, { message: 'A valid email is required' })
+  /**
+   * A matriculation number (students) or an email address (staff). One field for
+   * both because the shapes are unambiguous — `resolveLoginIdentifier` decides
+   * which it is by testing MATRIC_PATTERN — and because a single field cannot
+   * leak which kind of account exists: an unknown identifier of either shape
+   * gets the same generic failure.
+   *
+   * Validated only as a non-empty bounded string: a stricter rule here would
+   * reject bad input with a DIFFERENT error than a wrong password, which is an
+   * enumeration signal. 320 is the email ceiling and comfortably clears
+   * MATRIC_MAX_LENGTH.
+   */
+  @IsString()
+  @IsNotEmpty({ message: 'Matriculation number or email is required' })
   @MaxLength(320)
-  email!: string;
+  identifier!: string;
 
   @IsString()
   @IsNotEmpty({ message: 'Password is required' })

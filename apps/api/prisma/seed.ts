@@ -479,7 +479,7 @@ async function seedDemoStudents(
 
   const demo = [
     {
-      matriculationNumber: 'DEMO/CSC/24/0001',
+      matriculationNumber: 'CSC/2024/001',
       surname: 'Adeyemi',
       firstName: 'Bola',
       gender: Gender.FEMALE,
@@ -487,7 +487,7 @@ async function seedDemoStudents(
       officialEmail: 'bola.adeyemi@demo.example',
     },
     {
-      matriculationNumber: 'DEMO/CSC/24/0002',
+      matriculationNumber: 'CSC/2024/002',
       surname: 'Okoro',
       firstName: 'Chidi',
       gender: Gender.MALE,
@@ -495,7 +495,7 @@ async function seedDemoStudents(
       officialEmail: 'chidi.okoro@demo.example',
     },
     {
-      matriculationNumber: 'DEMO/MTH/24/0003',
+      matriculationNumber: 'MTH/2024/003',
       surname: 'Ibrahim',
       firstName: 'Amina',
       gender: Gender.FEMALE,
@@ -503,7 +503,7 @@ async function seedDemoStudents(
       officialEmail: 'amina.ibrahim@demo.example',
     },
     {
-      matriculationNumber: 'DEMO/EEE/24/0004',
+      matriculationNumber: 'EEE/2024/004',
       surname: 'Balogun',
       firstName: 'Tunde',
       gender: Gender.MALE,

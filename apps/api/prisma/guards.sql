@@ -173,6 +173,21 @@ DROP INDEX IF EXISTS uq_matric_ci;
 CREATE UNIQUE INDEX uq_matric_ci
   ON student_records (lower(matriculation_number));
 
+-- The matriculation-number FORMAT: PREFIX/YEAR/SEQUENCE, e.g. AGE/2021/001.
+-- The DTO, the service layer and the CSV import all enforce this too (see
+-- students/matriculation.ts), but the number is the student's login identifier
+-- and is immutable once issued, so the last line of defence belongs in the
+-- database — including against a direct psql write by a DBA.
+--
+-- Deliberately NOT a fixed 3-digit sequence: an institution admitting more than
+-- 999 students to one cohort must be able to issue AGE/2021/1000. Stored upper
+-- case because uq_matric_ci above folds case, so the canonical form has to be
+-- unambiguous.
+ALTER TABLE student_records DROP CONSTRAINT IF EXISTS ck_student_matric_format;
+ALTER TABLE student_records
+  ADD CONSTRAINT ck_student_matric_format
+  CHECK (matriculation_number ~ '^[A-Z][A-Z0-9]{1,9}/[0-9]{4}/[0-9]{1,6}$');
+
 -- Efficient case-insensitive search on surname/first name for admin lists.
 CREATE INDEX IF NOT EXISTS ix_student_surname_lower
   ON student_records (lower(surname));

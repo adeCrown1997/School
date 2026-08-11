@@ -6,7 +6,7 @@ import { AuthService } from './auth.service';
 import { ChangePasswordDto, ForgotPasswordDto, LoginDto, ResetPasswordDto } from './dto/auth.dto';
 import { REFRESH_COOKIE, clearAuthCookies, setAuthCookies } from './cookies';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { Public } from './decorators';
+import { AllowPasswordChangePending, Public } from './decorators';
 import { CurrentUser } from '../common/current-user.decorator';
 import { AuthPrincipal } from '../common/auth-principal';
 
@@ -39,9 +39,15 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const tokens = await this.auth.login(dto.email, dto.password, this.ctx(req));
+    const tokens = await this.auth.login(dto.identifier, dto.password, this.ctx(req));
     setAuthCookies(res, tokens, this.config);
-    return { ok: true, data: { authenticated: true } };
+    // mustChangePassword lets the client route straight to the change-password
+    // screen. It is a UX hint only — the server independently blocks every other
+    // route until the password is changed (PasswordChangeGuard).
+    return {
+      ok: true,
+      data: { authenticated: true, mustChangePassword: tokens.mustChangePassword },
+    };
   }
 
   @Public()
@@ -56,6 +62,7 @@ export class AuthController {
 
   @Post('logout')
   @UseGuards(JwtAuthGuard)
+  @AllowPasswordChangePending()
   @HttpCode(200)
   async logout(
     @Req() req: Request,
@@ -71,6 +78,7 @@ export class AuthController {
   /** Returns the current principal — used by the frontend to render by role. */
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @AllowPasswordChangePending()
   me(@CurrentUser() user: AuthPrincipal) {
     return {
       ok: true,
@@ -81,12 +89,15 @@ export class AuthController {
         fullName: user.fullName,
         permissions: user.permissions,
         studentRecordId: user.studentRecordId ?? null,
+        matriculationNumber: user.matriculationNumber ?? null,
+        mustChangePassword: user.mustChangePassword,
       },
     };
   }
 
   @Post('change-password')
   @UseGuards(JwtAuthGuard)
+  @AllowPasswordChangePending()
   @HttpCode(200)
   async changePassword(
     @Body() dto: ChangePasswordDto,

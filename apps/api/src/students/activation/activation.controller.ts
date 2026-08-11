@@ -27,6 +27,26 @@ export class ActivationController {
     };
   }
 
+  /**
+   * The one route the student-facing client calls. With email verification off
+   * (the default) this completes activation outright; with it on, it sends the
+   * OTP and the client continues to /verify. `emailVerificationRequired` tells
+   * the client which happened, so the UI needs no build-time knowledge of the
+   * server's configuration.
+   */
+  @Public()
+  @Post()
+  @HttpCode(200)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async activate(@Body() dto: ActivationIdentifyDto, @Req() req: Request) {
+    const data = await this.activation.activate(dto, this.ctx(req));
+    return {
+      ok: true,
+      data: { ...data, emailVerificationRequired: this.activation.emailVerificationEnabled },
+    };
+  }
+
+  /** Retained entry point for the OTP flow's first step. */
   @Public()
   @Post('identify')
   @HttpCode(202)

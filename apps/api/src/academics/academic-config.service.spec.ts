@@ -34,6 +34,7 @@ const actor: AuthPrincipal = {
   fullName: 'Admin',
   permissions: ['academic_config.manage'],
   scopedPermissions: [{ permission: 'academic_config.manage', scope: { scopeType: 'GLOBAL' } }],
+  mustChangePassword: false,
 };
 
 /** The seeded 5-point scale — the reference a valid band set must look like. */

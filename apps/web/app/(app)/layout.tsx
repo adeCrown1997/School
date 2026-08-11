@@ -2,10 +2,12 @@
 
 /**
  * Layout for all authenticated pages. Redirects anonymous visitors to /login
- * once the session has loaded. This gate is a UX convenience — it prevents a
- * flash of empty admin chrome — but it is NOT the security boundary: the API
- * authorizes every request independently, so the app never trusts this check to
- * protect data.
+ * once the session has loaded, and anyone still holding the initial password
+ * issued at activation to /change-password. Both gates are a UX convenience —
+ * they prevent a flash of chrome the user cannot use — but neither is the
+ * security boundary: the API authorizes every request independently (and its
+ * PasswordChangeGuard rejects this whole group while a change is pending), so
+ * the app never trusts these checks to protect data.
  */
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -18,7 +20,9 @@ export default function AppGroupLayout({ children }: { children: React.ReactNode
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !me) router.replace('/login');
+    if (loading) return;
+    if (!me) router.replace('/login');
+    else if (me.mustChangePassword) router.replace('/change-password');
   }, [me, loading, router]);
 
   if (loading) {
@@ -28,7 +32,7 @@ export default function AppGroupLayout({ children }: { children: React.ReactNode
       </div>
     );
   }
-  if (!me) return null; // redirecting
+  if (!me || me.mustChangePassword) return null; // redirecting
 
   return <AppShell>{children}</AppShell>;
 }

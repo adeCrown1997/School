@@ -42,7 +42,7 @@ function makeService(overrides: {
 
 function baseInput(over: Partial<StudentMasterInput> = {}): StudentMasterInput {
   return {
-    matriculationNumber: 'CSC/24/001',
+    matriculationNumber: 'CSC/2024/001',
     surname: 'Bello',
     firstName: 'Ada',
     dateOfBirth: new Date('2005-01-02'),
@@ -62,6 +62,7 @@ const actor: AuthPrincipal = {
   fullName: 'Registry',
   permissions: [],
   scopedPermissions: [],
+  mustChangePassword: false,
 };
 
 describe('StudentsService.validateMasterInput', () => {
@@ -70,6 +71,24 @@ describe('StudentsService.validateMasterInput', () => {
     const out = await svc.validateMasterInput(baseInput());
     expect(out.studentStatusId).toBe('active-id');
   });
+
+  it('normalizes the matriculation number before storing it', async () => {
+    const svc = makeService({});
+    const out = await svc.validateMasterInput(baseInput({ matriculationNumber: ' csc/2024/001 ' }));
+    expect(out.matriculationNumber).toBe('CSC/2024/001');
+  });
+
+  it.each(['CSC/24/001', 'CSC-2024-001', '1SC/2024/001', 'CSC/2024/', 'not a matric'])(
+    'rejects %s, which does not match PREFIX/YEAR/SEQUENCE',
+    async (matriculationNumber) => {
+      // Bulk import builds StudentMasterInput directly, bypassing the DTO, so the
+      // format has to be enforced here too — not only by @Matches on the DTO.
+      const svc = makeService({});
+      await expect(svc.validateMasterInput(baseInput({ matriculationNumber }))).rejects.toThrow(
+        /PREFIX\/YEAR\/SEQUENCE/,
+      );
+    },
+  );
 
   it('rejects an invalid date of birth', async () => {
     const svc = makeService({});
@@ -129,7 +148,7 @@ describe('StudentsService.assertMatricAvailable', () => {
       studentRecord: { findFirst: jest.fn().mockResolvedValue({ id: 'existing' }) },
     } as unknown as PrismaService;
     const svc = makeService({});
-    await expect(svc.assertMatricAvailable(client, 'CSC/24/001')).rejects.toThrow(
+    await expect(svc.assertMatricAvailable(client, 'CSC/2024/001')).rejects.toThrow(
       ConflictException,
     );
   });
@@ -139,17 +158,17 @@ describe('StudentsService.assertMatricAvailable', () => {
       studentRecord: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
     const svc = makeService({});
-    await expect(svc.assertMatricAvailable(client, 'CSC/24/999')).resolves.toBeUndefined();
+    await expect(svc.assertMatricAvailable(client, 'CSC/2024/999')).resolves.toBeUndefined();
   });
 
   it('performs a case-insensitive lookup', async () => {
     const findFirst = jest.fn().mockResolvedValue(null);
     const client = { studentRecord: { findFirst } } as unknown as PrismaService;
     const svc = makeService({});
-    await svc.assertMatricAvailable(client, 'Csc/24/001');
+    await svc.assertMatricAvailable(client, 'Csc/2024/001');
     expect(findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { matriculationNumber: { equals: 'Csc/24/001', mode: 'insensitive' } },
+        where: { matriculationNumber: { equals: 'Csc/2024/001', mode: 'insensitive' } },
       }),
     );
   });

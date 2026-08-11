@@ -195,3 +195,170 @@ describe('ActivationService.setPassword (continuation token)', () => {
     ).rejects.toThrow(/activation session has expired/);
   });
 });
+
+/**
+ * The default flow with email verification disabled: the three enrolment factors
+ * are proven and the login is created in ONE request, with the surname as the
+ * initial password and mustChangePassword set. The properties that matter are
+ * that the weak initial password buys nothing but the change-password screen,
+ * that matric alone still isn't enough, and that the reply stays generic.
+ */
+describe('ActivationService.activate (email verification disabled)', () => {
+  const GENERIC_ACTIVATE =
+    'If your details match our records, your account is now active. Sign in with your matriculation number and your surname as the password.';
+
+  /** Captures what the account-creation transaction was asked to write. */
+  function buildOtpFree(record: Record<string, unknown> | null) {
+    const userCreate = jest.fn().mockResolvedValue({ id: 'u1', email: 'ada.bello@demo.example' });
+    const tx = {
+      user: { create: userCreate },
+      studentRecord: { update: jest.fn().mockResolvedValue({}) },
+      studentActivation: { update: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma: Record<string, unknown> = {
+      studentRecord: { findFirst: jest.fn().mockResolvedValue(record) },
+      studentActivation: {
+        update: jest.fn().mockResolvedValue({ identifyAttempts: 1 }),
+        upsert: jest.fn().mockResolvedValue({ id: 'a1', lockedUntil: null }),
+      },
+      $transaction: jest.fn(async (fn: (t: unknown) => unknown) => fn(tx)),
+    };
+    const built = build(prisma as never);
+    return { ...built, userCreate, tx, prisma };
+  }
+
+  const pendingRecord = () => ({ ...eligibleRecord(), firstName: 'Ada' });
+
+  it('creates the login with the SURNAME as the initial password, flagged must-change', async () => {
+    const { service, userCreate, notify } = buildOtpFree(pendingRecord());
+    const res = await service.activate(identifyDto, {});
+
+    expect(res).toEqual({ message: GENERIC_ACTIVATE });
+    const data = userCreate.mock.calls[0][0].data;
+    expect(data).toMatchObject({
+      userType: 'STUDENT',
+      email: 'ada.bello@demo.example',
+      mustChangePassword: true,
+      studentRecordId: 'r1',
+      isActive: true,
+    });
+    // The password is stored only as a hash, and no OTP is sent on this path.
+    expect(data.passwordHash).toBe('$argon2id$hash');
+    expect(data).not.toHaveProperty('password');
+    expect(notify.sendActivationOtp).not.toHaveBeenCalled();
+  });
+
+  it('hashes the surname — never stores or echoes it in the clear', async () => {
+    const { service } = buildOtpFree(pendingRecord());
+    const passwords = (service as unknown as { passwords: { hash: jest.Mock } }).passwords;
+    const res = await service.activate(identifyDto, {});
+    expect(passwords.hash).toHaveBeenCalledWith('Bello');
+    expect(JSON.stringify(res)).not.toContain('Bello');
+  });
+
+  it('flips the record to ACTIVATED and retires the activation row', async () => {
+    const { service, tx } = buildOtpFree(pendingRecord());
+    await service.activate(identifyDto, {});
+    expect(tx.studentRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ activationState: 'ACTIVATED' }) }),
+    );
+    expect(tx.studentActivation.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ continuationTokenHash: null }),
+      }),
+    );
+  });
+
+  it('creates NOTHING when the surname factor mismatches (matric + DOB alone is not enough)', async () => {
+    const { service, userCreate, prisma } = buildOtpFree({
+      ...pendingRecord(),
+      surname: 'Different',
+    });
+    const res = await service.activate(identifyDto, {});
+    expect(res).toEqual({ message: GENERIC_ACTIVATE }); // same shape → no leak
+    expect(userCreate).not.toHaveBeenCalled();
+    // Counted as a failed attempt, so DOB guessing is throttled on this path too.
+    expect((prisma.studentActivation as { update: jest.Mock }).update).toHaveBeenCalled();
+  });
+
+  it('creates NOTHING when the DOB factor mismatches', async () => {
+    const { service, userCreate } = buildOtpFree({
+      ...pendingRecord(),
+      dateOfBirth: new Date('1999-12-31'),
+    });
+    await service.activate(identifyDto, {});
+    expect(userCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses to re-activate a record that already has a login', async () => {
+    const { service, userCreate } = buildOtpFree({
+      ...pendingRecord(),
+      userAccount: { id: 'existing' },
+    });
+    const res = await service.activate(identifyDto, {});
+    expect(res).toEqual({ message: GENERIC_ACTIVATE });
+    expect(userCreate).not.toHaveBeenCalled();
+  });
+
+  it('never invents a login address when no email is on file', async () => {
+    const { service, userCreate } = buildOtpFree({ ...pendingRecord(), officialEmail: null });
+    await service.activate(identifyDto, {});
+    expect(userCreate).not.toHaveBeenCalled();
+  });
+
+  it('stays generic for an unknown matric and creates nothing', async () => {
+    const { service, userCreate, audit } = buildOtpFree(null);
+    const res = await service.activate(identifyDto, {});
+    expect(res).toEqual({ message: GENERIC_ACTIVATE });
+    expect(userCreate).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'student.activation.identify.no_record' }),
+    );
+  });
+
+  it('honours an existing lockout without creating anything', async () => {
+    const { service, userCreate } = buildOtpFree({
+      ...pendingRecord(),
+      activation: { id: 'a1', lockedUntil: new Date(Date.now() + 600_000) },
+    });
+    await service.activate(identifyDto, {});
+    expect(userCreate).not.toHaveBeenCalled();
+  });
+
+  it('reports email verification as disabled so the client skips the OTP step', () => {
+    const { service } = buildOtpFree(pendingRecord());
+    expect(service.emailVerificationEnabled).toBe(false);
+  });
+});
+
+describe('ActivationService.activate (email verification re-enabled)', () => {
+  it('routes back to the OTP flow when the flag is on, creating no account', async () => {
+    const update = jest.fn().mockResolvedValue({ identifyAttempts: 0 });
+    const config = {
+      get: jest.fn((key: string, def: unknown) =>
+        key === 'STUDENT_ACTIVATION_REQUIRE_EMAIL_OTP' ? true : def,
+      ),
+    } as unknown as ConfigService;
+    const notify = {
+      sendActivationOtp: jest.fn().mockResolvedValue(undefined),
+    } as unknown as NotificationService;
+    const service = new ActivationService(
+      {
+        studentRecord: { findFirst: jest.fn().mockResolvedValue(eligibleRecord()) },
+        studentActivation: { update },
+      } as unknown as PrismaService,
+      { record: jest.fn(), recordTx: jest.fn() } as unknown as AuditService,
+      {
+        hash: jest.fn(),
+        validateStrength: jest.fn().mockReturnValue([]),
+      } as unknown as PasswordService,
+      notify,
+      config,
+    );
+
+    const res = await service.activate(identifyDto, {});
+    expect(service.emailVerificationEnabled).toBe(true);
+    expect(res).toEqual({ message: GENERIC }); // the OTP-flow message
+    expect(notify.sendActivationOtp).toHaveBeenCalled();
+  });
+});

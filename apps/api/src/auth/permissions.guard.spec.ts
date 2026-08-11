@@ -32,6 +32,7 @@ const principal = (permissions: string[]): AuthPrincipal => ({
   fullName: 'A',
   permissions,
   scopedPermissions: [],
+  mustChangePassword: false,
 });
 
 describe('PermissionsGuard', () => {

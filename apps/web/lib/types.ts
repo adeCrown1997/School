@@ -20,6 +20,23 @@ export interface Me {
   fullName: string;
   permissions: string[];
   studentRecordId: string | null;
+  /** Read-only here; a student can never change it. Null for staff. */
+  matriculationNumber: string | null;
+  /** True while the account still holds the initial password issued at activation. */
+  mustChangePassword: boolean;
+}
+
+/** POST /auth/login */
+export interface LoginResult {
+  authenticated: boolean;
+  mustChangePassword: boolean;
+}
+
+/** POST /students/activate */
+export interface ActivationResult {
+  message: string;
+  /** False while email verification is disabled; the OTP step is then skipped. */
+  emailVerificationRequired: boolean;
 }
 
 export interface NamedRef {

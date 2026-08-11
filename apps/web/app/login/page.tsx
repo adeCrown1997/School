@@ -5,6 +5,16 @@
  * httpOnly cookies and we re-fetch the principal, then route by user type. There
  * is deliberately no "create account" link — staff accounts are provisioned by
  * an administrator and students use the separate activation flow (linked below).
+ *
+ * Students sign in with their MATRICULATION NUMBER (AGE/2021/001); staff sign in
+ * with an email address. Both go in the same `identifier` field and the API tells
+ * them apart by shape — one field rather than a "student or staff?" toggle, which
+ * would leak which identifiers exist. The field is deliberately NOT type="email",
+ * since that would reject a valid matric before it ever reached the API.
+ *
+ * A student whose password is still the initial one (their surname) is sent to
+ * /change-password rather than the dashboard. The API enforces the same thing —
+ * this redirect is convenience, not the gate.
  */
 import { useState } from 'react';
 import Link from 'next/link';
@@ -12,11 +22,12 @@ import { useRouter } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Alert, Field } from '@/components/ui';
+import type { LoginResult } from '@/lib/types';
 
 export default function LoginPage() {
   const router = useRouter();
   const { refresh } = useSession();
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -26,8 +37,12 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await api.post('/auth/login', { email, password });
+      const result = await api.post<LoginResult>('/auth/login', { identifier, password });
       const me = await refresh();
+      if (result?.mustChangePassword ?? me?.mustChangePassword) {
+        router.replace('/change-password');
+        return;
+      }
       router.replace(me?.userType === 'STUDENT' ? '/student' : '/dashboard');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to sign in. Please try again.');
@@ -47,12 +62,15 @@ export default function LoginPage() {
           {error ? <Alert kind="error">{error}</Alert> : null}
 
           <Field
-            label="Email"
-            type="email"
+            label="Matriculation number or email"
+            type="text"
             autoComplete="username"
+            autoCapitalize="characters"
+            placeholder="AGE/2021/001"
+            hint="Students sign in with their matriculation number. Staff use their email address."
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
           />
           <Field
             label="Password"

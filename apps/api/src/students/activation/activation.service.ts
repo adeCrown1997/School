@@ -43,11 +43,25 @@ export class ActivationService {
   private readonly continuationTtlMin: number;
   private readonly maxAttempts: number;
   private readonly lockoutMin = 15;
+  /** See STUDENT_ACTIVATION_REQUIRE_EMAIL_OTP in env.validation.ts. */
+  private readonly requireEmailOtp: boolean;
 
   /** Uniform response for steps 1 & 2 — reveals nothing about record existence. */
   private static readonly GENERIC_IDENTIFY = {
     message:
       'If your details match our records, a verification code has been sent to the email on file.',
+  };
+
+  /**
+   * Uniform response for the OTP-free path. Deliberately does NOT confirm that
+   * an account was created, for the same enumeration reason as GENERIC_IDENTIFY:
+   * a caller who guesses a matric number but not the DOB/surname must not be
+   * able to tell the two failures apart. A student who really did activate can
+   * simply log in, so nothing legitimate is lost by staying vague here.
+   */
+  private static readonly GENERIC_ACTIVATE = {
+    message:
+      'If your details match our records, your account is now active. Sign in with your matriculation number and your surname as the password.',
   };
 
   constructor(
@@ -60,6 +74,29 @@ export class ActivationService {
     this.otpTtlMin = this.config.get<number>('OTP_TTL_MINUTES', 10);
     this.continuationTtlMin = this.config.get<number>('ACTIVATION_TOKEN_TTL_MINUTES', 30);
     this.maxAttempts = this.config.get<number>('MAX_ACTIVATION_ATTEMPTS', 5);
+    this.requireEmailOtp = this.config.get<boolean>(
+      'STUDENT_ACTIVATION_REQUIRE_EMAIL_OTP',
+      false,
+    );
+  }
+
+  /**
+   * Entry point for POST /students/activate.
+   *
+   * Routes to whichever flow is configured, so the controller and the web client
+   * are identical either way: with email verification off (the default) the
+   * account is created here and now; with it on, this only sends the OTP and the
+   * caller must continue through verify + set-password.
+   */
+  async activate(dto: ActivationIdentifyDto, ctx: RequestContext) {
+    return this.requireEmailOtp
+      ? this.identify(dto, ctx)
+      : this.activateWithoutEmailVerification(dto, ctx);
+  }
+
+  /** True when the OTP steps are live — surfaced so the client can adapt. */
+  get emailVerificationEnabled(): boolean {
+    return this.requireEmailOtp;
   }
 
   // --- Step 1: identify (matric + DOB + surname) -------------------------
@@ -189,6 +226,90 @@ export class ActivationService {
     };
   }
 
+  // --- OTP-free activation (the default) ----------------------------------
+  /**
+   * Prove the three factors and create the login in ONE request, with the
+   * SURNAME as the initial password and `mustChangePassword` set so the student
+   * cannot reach the dashboard until they choose their own.
+   *
+   * The surname is a weak secret by construction, which is precisely why it is
+   * only ever a one-shot credential: it is already known to the institution, it
+   * grants nothing but the change-password screen, and it stops working the
+   * moment the student replaces it. It is also NOT accepted on its own — the
+   * caller had to supply matric + DOB + surname to get here.
+   *
+   * Reuses the same lockout counters as `identify`, so guessing a DOB against a
+   * known matric number is throttled identically on both paths.
+   */
+  private async activateWithoutEmailVerification(
+    dto: ActivationIdentifyDto,
+    ctx: RequestContext,
+  ) {
+    const matric = dto.matriculationNumber.trim();
+    const record = await this.prisma.studentRecord.findFirst({
+      where: { matriculationNumber: { equals: matric, mode: 'insensitive' } },
+      include: { activation: true, userAccount: { select: { id: true } } },
+    });
+
+    if (!record) {
+      await this.audit.record({
+        actorLabel: matric,
+        action: 'student.activation.identify.no_record',
+        entityType: 'StudentRecord',
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+      });
+      return ActivationService.GENERIC_ACTIVATE;
+    }
+
+    const activation = await this.ensureActivation(record.id, record.activation);
+    if (this.isLocked(activation.lockedUntil)) {
+      await this.audit.record({
+        actorLabel: matric,
+        action: 'student.activation.identify.locked',
+        entityType: 'StudentRecord',
+        entityId: record.id,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+      });
+      return ActivationService.GENERIC_ACTIVATE;
+    }
+
+    if (!this.factorsMatch(record, dto) || record.activationState !== 'PENDING' || record.userAccount) {
+      await this.registerFailedIdentify(record.id, matric, ctx, {
+        reason: !this.factorsMatch(record, dto)
+          ? 'factor_mismatch'
+          : record.userAccount
+            ? 'already_linked'
+            : 'not_pending',
+      });
+      return ActivationService.GENERIC_ACTIVATE;
+    }
+
+    // An email is still required as the User's unique login key (User.email is
+    // NOT NULL). Never invent one — that would create an unreachable account
+    // and could collide with a real address later.
+    if (!record.officialEmail) {
+      await this.registerFailedIdentify(record.id, matric, ctx, { reason: 'no_email_on_file' });
+      return ActivationService.GENERIC_ACTIVATE;
+    }
+
+    await this.createStudentLogin(
+      {
+        id: record.id,
+        surname: record.surname,
+        firstName: record.firstName,
+        officialEmail: record.officialEmail,
+      },
+      activation.id,
+      record.surname,
+      ctx,
+      { mustChangePassword: true, action: 'student.activation.completed_without_email_verification' },
+    );
+
+    return ActivationService.GENERIC_ACTIVATE;
+  }
+
   // --- Step 3: set password + create the linked STUDENT login ------------
   async setPassword(dto: ActivationSetPasswordDto, ctx: RequestContext) {
     const activation = await this.prisma.studentActivation.findFirst({
@@ -225,7 +346,40 @@ export class ActivationService {
     const violations = this.passwords.validateStrength(dto.password);
     if (violations.length) throw new BadRequestException(violations);
 
-    const passwordHash = await this.passwords.hash(dto.password);
+    // The OTP path lets the student choose the password up front, so there is
+    // nothing to force a change of afterwards.
+    const user = await this.createStudentLogin(
+      {
+        id: record.id,
+        surname: record.surname,
+        firstName: record.firstName,
+        officialEmail: record.officialEmail,
+      },
+      activation.id,
+      dto.password,
+      ctx,
+      { mustChangePassword: false, action: 'student.activation.completed' },
+    );
+
+    return { activated: true, email: user.email };
+  }
+
+  /**
+   * The account-creation transaction, shared by both activation flows: create
+   * the User, flip the record to ACTIVATED, retire the activation row, audit.
+   *
+   * `mustChangePassword` is the only difference between the callers — true when
+   * the institution supplied the initial password (the surname), false when the
+   * student chose it themselves.
+   */
+  private async createStudentLogin(
+    record: { id: string; surname: string; firstName: string; officialEmail: string },
+    activationId: string,
+    initialPassword: string,
+    ctx: RequestContext,
+    opts: { mustChangePassword: boolean; action: string },
+  ): Promise<{ id: string; email: string }> {
+    const passwordHash = await this.passwords.hash(initialPassword);
     const email = record.officialEmail;
 
     try {
@@ -237,6 +391,7 @@ export class ActivationService {
             userType: 'STUDENT',
             email,
             passwordHash,
+            mustChangePassword: opts.mustChangePassword,
             fullName: [record.surname, record.firstName].filter(Boolean).join(' '),
             isActive: true,
             studentRecordId: record.id,
@@ -252,7 +407,7 @@ export class ActivationService {
         });
 
         await tx.studentActivation.update({
-          where: { id: activation.id },
+          where: { id: activationId },
           data: {
             continuationTokenHash: null,
             continuationExpiresAt: null,
@@ -263,10 +418,10 @@ export class ActivationService {
         await this.audit.recordTx(tx, {
           actorId: created.id,
           actorLabel: created.email,
-          action: 'student.activation.completed',
+          action: opts.action,
           entityType: 'StudentRecord',
           entityId: record.id,
-          metadata: { userId: created.id },
+          metadata: { userId: created.id, mustChangePassword: opts.mustChangePassword },
           ip: ctx.ip,
           userAgent: ctx.userAgent,
         });
@@ -274,7 +429,7 @@ export class ActivationService {
       });
 
       this.logger.log(`Student record ${record.id} activated (user ${user.id})`);
-      return { activated: true, email: user.email };
+      return user;
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         // Either the record already has a login (double submit) or the email is

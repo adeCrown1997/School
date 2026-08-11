@@ -15,6 +15,11 @@ import { generateToken } from '../common/crypto.util';
 import { Paginated, sortDirection } from '../common/pagination';
 import { IdGeneratorService } from './id-generator.service';
 import {
+  MATRIC_FORMAT_MESSAGE,
+  isValidMatriculationNumber,
+  normalizeMatriculationNumber,
+} from './matriculation';
+import {
   ChangeStudentStatusDto,
   CreateStudentDto,
   ListStudentsQueryDto,
@@ -197,7 +202,7 @@ export class StudentsService {
    */
   private async normalizeAndValidate(dto: CreateStudentDto): Promise<StudentMasterInput> {
     return this.validateMasterInput({
-      matriculationNumber: dto.matriculationNumber.trim(),
+      matriculationNumber: normalizeMatriculationNumber(dto.matriculationNumber),
       jambRegistrationNumber: dto.jambRegistrationNumber?.trim() || null,
       surname: dto.surname.trim(),
       firstName: dto.firstName.trim(),
@@ -224,6 +229,15 @@ export class StudentsService {
    * first problem — import surfaces these as row-level errors.
    */
   async validateMasterInput(input: StudentMasterInput): Promise<StudentMasterInput> {
+    // Matric format is checked HERE, not only in the DTO, because bulk import
+    // builds a StudentMasterInput directly and never passes through CreateStudentDto.
+    // Normalizing first makes the canonical (upper-case) form what gets stored,
+    // which is what the case-insensitive unique index expects.
+    input.matriculationNumber = normalizeMatriculationNumber(input.matriculationNumber);
+    if (!isValidMatriculationNumber(input.matriculationNumber)) {
+      throw new BadRequestException(MATRIC_FORMAT_MESSAGE);
+    }
+
     if (Number.isNaN(input.dateOfBirth.getTime())) {
       throw new BadRequestException('Invalid date of birth');
     }
