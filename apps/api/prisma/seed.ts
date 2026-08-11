@@ -5,30 +5,43 @@
  *
  * What it writes:
  *   • FOUNDATIONAL (always): the permission catalog, the system roles + their
- *     role→permission links, the student-status vocabulary, and ONE bootstrap
- *     SUPER_ADMIN read from BOOTSTRAP_ADMIN_* env (never hardcoded).
- *   • DEMO (gated by SEED_DEMO): a small university structure and a handful of
- *     PENDING demo student master records for exercising activation/dashboards.
+ *     role→permission links, the student-status vocabulary, the academic
+ *     reference data (course categories, the default grading scale, the credit
+ *     policy), and ONE bootstrap SUPER_ADMIN read from BOOTSTRAP_ADMIN_* env
+ *     (never hardcoded).
+ *   • DEMO (gated by SEED_DEMO): a small university structure, a handful of
+ *     PENDING demo student master records for exercising activation/dashboards,
+ *     and a worked academic example — semesters, a course catalogue with
+ *     prerequisites, a published curriculum, and first-semester offerings.
  *     Demo data is skipped in production unless SEED_DEMO=true is set explicitly,
  *     so no fake data can slip into a real deployment.
  *
  * Every write is an upsert keyed on a natural unique, so re-running is safe.
  *
- * NOTE: no "grade scale" is seeded — Phase 1 has no results/GPA model in the
- * schema, so seeding one would be inventing structure the system cannot use.
- * That belongs to the Phase 2 academic-records work.
+ * Two things the seed deliberately will NOT do on re-run, mirroring the rules
+ * AcademicConfigService enforces at runtime: it never steals `isDefault` from a
+ * grading scale an administrator has chosen, and it never rewrites the bands of
+ * a scale that has already graded something (a GradeRecord pins the scale id,
+ * not a snapshot of its bands, so an in-place edit would re-grade history).
  */
 import {
   ActivationState,
+  CurriculumStatus,
   EntryMode,
   Gender,
+  OfferingStatus,
   Prisma,
   PrismaClient,
+  RequirementType,
   ScopeType,
 } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { PERMISSION_DEFS } from '../src/rbac/permissions.catalog';
 import { ROLE_DEFS } from '../src/rbac/roles.catalog';
+import {
+  CREDIT_POLICY_KEY,
+  DEFAULT_CREDIT_POLICY,
+} from '../src/academics/academic-config.constants';
 
 const prisma = new PrismaClient();
 
@@ -160,6 +173,132 @@ async function seedStudentStatuses(): Promise<string> {
   return activeId;
 }
 
+/**
+ * The course-classification vocabulary. Data rather than an enum so a faculty
+ * can add its own without a deployment; these are the classifications almost
+ * every Nigerian university needs on day one.
+ */
+async function seedCourseCategories(): Promise<void> {
+  const categories = [
+    { key: 'CORE', label: 'Core', description: 'Compulsory to the programme', sortOrder: 10 },
+    {
+      key: 'GST',
+      label: 'General Studies',
+      description: 'University-wide requirement, owned by no department',
+      sortOrder: 20,
+    },
+    {
+      key: 'FACULTY_ELECTIVE',
+      label: 'Faculty Elective',
+      description: 'Chosen from within the faculty',
+      sortOrder: 30,
+    },
+    {
+      key: 'DEPARTMENTAL_ELECTIVE',
+      label: 'Departmental Elective',
+      description: 'Chosen from within the department',
+      sortOrder: 40,
+    },
+    {
+      key: 'SERVICE',
+      label: 'Service Course',
+      description: 'Taught by one department for another',
+      sortOrder: 50,
+    },
+    { key: 'PROJECT', label: 'Project / Research', sortOrder: 60 },
+    { key: 'SIWES', label: 'Industrial Training', sortOrder: 70 },
+  ];
+
+  for (const c of categories) {
+    await prisma.courseCategory.upsert({
+      where: { key: c.key },
+      create: c,
+      // isActive is left alone: a category an institution has retired must stay
+      // retired across re-seeds.
+      update: { label: c.label, description: c.description ?? null, sortOrder: c.sortOrder },
+    });
+  }
+  console.log(`  course categories: ${categories.length} upserted`);
+}
+
+/**
+ * The default 5-point grading scale.
+ *
+ * Bands cover 0-100 with no gap and no overlap, inclusive at both ends, which is
+ * exactly what AcademicConfigService.validateBands demands — seeding anything
+ * else would produce a scale the config UI then refuses to save.
+ */
+async function seedGradeScale(): Promise<void> {
+  const KEY = 'FIVE_POINT';
+  const bands = [
+    { grade: 'A', minScore: 70, maxScore: 100, gradePoint: 5, sortOrder: 0 },
+    { grade: 'B', minScore: 60, maxScore: 69, gradePoint: 4, sortOrder: 1 },
+    { grade: 'C', minScore: 50, maxScore: 59, gradePoint: 3, sortOrder: 2 },
+    { grade: 'D', minScore: 45, maxScore: 49, gradePoint: 2, sortOrder: 3 },
+    { grade: 'E', minScore: 40, maxScore: 44, gradePoint: 1, sortOrder: 4 },
+    { grade: 'F', minScore: 0, maxScore: 39, gradePoint: 0, sortOrder: 5 },
+  ];
+
+  const scale = await prisma.gradeScale.upsert({
+    where: { key: KEY },
+    create: {
+      key: KEY,
+      name: '5-Point Scale',
+      description: 'A=5 … F=0, the common Nigerian undergraduate scale',
+      // Claim the default only on a fresh install. On re-run the flag is left
+      // as-is below, so an administrator's choice of scale survives seeding.
+      isDefault: (await prisma.gradeScale.count({ where: { isDefault: true } })) === 0,
+    },
+    update: { name: '5-Point Scale' },
+  });
+
+  const graded = await prisma.gradeRecord.count({ where: { gradeScaleId: scale.id } });
+  if (graded > 0) {
+    console.log(`  grade scale ${KEY}: bands left untouched (${graded} record(s) already graded)`);
+    return;
+  }
+
+  for (const b of bands) {
+    await prisma.gradeBand.upsert({
+      where: { scaleId_grade: { scaleId: scale.id, grade: b.grade } },
+      create: { ...b, scaleId: scale.id },
+      update: {
+        minScore: b.minScore,
+        maxScore: b.maxScore,
+        gradePoint: b.gradePoint,
+        sortOrder: b.sortOrder,
+      },
+    });
+  }
+  console.log(
+    `  grade scale ${KEY}: ${bands.length} band(s)${scale.isDefault ? ' (default)' : ''}`,
+  );
+}
+
+/**
+ * The credit policy (INV-8: min/max units registrable per semester).
+ *
+ * Created only when absent. An institution that has tuned its limits must not
+ * have them reset to the shipped default by a re-seed.
+ */
+async function seedCreditPolicy(): Promise<void> {
+  const existing = await prisma.systemConfig.findUnique({ where: { key: CREDIT_POLICY_KEY } });
+  if (existing) {
+    console.log(`  credit policy: already configured (${JSON.stringify(existing.value)})`);
+    return;
+  }
+  await prisma.systemConfig.create({
+    data: {
+      key: CREDIT_POLICY_KEY,
+      value: { ...DEFAULT_CREDIT_POLICY },
+      description: 'Min/max credit units registrable per semester (INV-8)',
+    },
+  });
+  console.log(
+    `  credit policy: ${DEFAULT_CREDIT_POLICY.minUnits}-${DEFAULT_CREDIT_POLICY.maxUnits} units`,
+  );
+}
+
 /** Create the single bootstrap SUPER_ADMIN from env, forced to rotate on login. */
 async function seedBootstrapAdmin(): Promise<void> {
   const email = process.env.BOOTSTRAP_ADMIN_EMAIL;
@@ -215,8 +354,10 @@ async function seedBootstrapAdmin(): Promise<void> {
 
 interface DemoProgramme {
   id: string;
+  code: string;
   facultyId: string;
   departmentId: string;
+  departmentCode: string;
 }
 
 /** A small, clearly-labelled demo university structure. Returns programme refs. */
@@ -311,8 +452,10 @@ async function seedDemoStructure(): Promise<{ programmes: DemoProgramme[]; sessi
         });
         programmes.push({
           id: programme.id,
+          code: programme.code,
           facultyId: faculty.id,
           departmentId: department.id,
+          departmentCode: department.code,
         });
       }
     }
@@ -408,6 +551,301 @@ async function seedDemoStudents(
   );
 }
 
+/**
+ * A worked academic example for the demo session: two semesters, a small course
+ * catalogue with a prerequisite chain, a PUBLISHED curriculum for the Computer
+ * Science programme, and first-semester offerings.
+ *
+ * The curriculum deliberately totals exactly 15 units per level-100 semester,
+ * matching the seeded credit-policy minimum, so registration has something
+ * coherent to validate against when that module lands. MTH courses are owned by
+ * Mathematics but required by Computer Science, which is the cross-department
+ * case the offering and scope rules exist for.
+ */
+async function seedDemoAcademics(programmes: DemoProgramme[], sessionId: string): Promise<void> {
+  const csc = programmes.find((p) => p.code === 'CSC-BSC');
+  if (!csc) return;
+
+  // --- Semesters. At most one may be current per session (guards.sql), so only
+  // the first carries the flag.
+  const semesterSpecs = [
+    {
+      sequence: 1,
+      name: 'First Semester',
+      startDate: new Date('2024-09-16'),
+      endDate: new Date('2025-01-31'),
+      isCurrent: true,
+    },
+    {
+      sequence: 2,
+      name: 'Second Semester',
+      startDate: new Date('2025-02-17'),
+      endDate: new Date('2025-07-25'),
+      isCurrent: false,
+    },
+  ];
+  const semesters = new Map<number, string>();
+  for (const s of semesterSpecs) {
+    const row = await prisma.semester.upsert({
+      where: { sessionId_sequence: { sessionId, sequence: s.sequence } },
+      create: { ...s, sessionId },
+      update: { name: s.name, startDate: s.startDate, endDate: s.endDate },
+    });
+    semesters.set(s.sequence, row.id);
+  }
+
+  const categoryIds = new Map<string, string>();
+  for (const key of ['CORE', 'GST']) {
+    const c = await prisma.courseCategory.findUnique({ where: { key }, select: { id: true } });
+    if (c) categoryIds.set(key, c.id);
+  }
+  const deptId = (code: string) => programmes.find((p) => p.departmentCode === code)?.departmentId;
+
+  // --- Course catalogue. A null department means university-wide (the GST set).
+  const courseSpecs = [
+    {
+      code: 'GST101',
+      title: 'Use of English I',
+      creditUnits: 2,
+      level: 100,
+      cat: 'GST',
+      dept: null,
+    },
+    {
+      code: 'GST102',
+      title: 'Use of English II',
+      creditUnits: 2,
+      level: 100,
+      cat: 'GST',
+      dept: null,
+    },
+    {
+      code: 'GST105',
+      title: 'Use of Library, Study Skills and ICT',
+      creditUnits: 1,
+      level: 100,
+      cat: 'GST',
+      dept: null,
+    },
+    {
+      code: 'GST107',
+      title: 'History and Philosophy of Science',
+      creditUnits: 1,
+      level: 100,
+      cat: 'GST',
+      dept: null,
+    },
+    {
+      code: 'CSC101',
+      title: 'Introduction to Computer Science',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'CSC',
+    },
+    {
+      code: 'CSC102',
+      title: 'Introduction to Programming',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'CSC',
+    },
+    {
+      code: 'CSC103',
+      title: 'Problem Solving with Computers',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'CSC',
+    },
+    {
+      code: 'CSC104',
+      title: 'Introduction to Digital Systems',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'CSC',
+    },
+    {
+      code: 'CSC201',
+      title: 'Data Structures and Algorithms',
+      creditUnits: 3,
+      level: 200,
+      cat: 'CORE',
+      dept: 'CSC',
+    },
+    {
+      code: 'MTH101',
+      title: 'Elementary Mathematics I (Algebra and Trigonometry)',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'MTH',
+    },
+    {
+      code: 'MTH102',
+      title: 'Elementary Mathematics II (Calculus)',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'MTH',
+    },
+    {
+      code: 'MTH103',
+      title: 'Elementary Mathematics III (Vectors and Geometry)',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'MTH',
+    },
+    {
+      code: 'MTH104',
+      title: 'Elementary Mathematics IV (Statistics)',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'MTH',
+    },
+    {
+      code: 'EEE101',
+      title: 'Basic Electrical Engineering',
+      creditUnits: 3,
+      level: 100,
+      cat: 'CORE',
+      dept: 'EEE',
+    },
+  ];
+
+  const courseIds = new Map<string, string>();
+  for (const c of courseSpecs) {
+    const row = await prisma.course.upsert({
+      where: { code: c.code },
+      create: {
+        code: c.code,
+        title: c.title,
+        creditUnits: c.creditUnits,
+        level: c.level,
+        categoryId: categoryIds.get(c.cat) ?? null,
+        departmentId: c.dept ? (deptId(c.dept) ?? null) : null,
+      },
+      // isActive is left alone — a course an institution deactivated stays so.
+      update: { title: c.title, creditUnits: c.creditUnits, level: c.level },
+    });
+    courseIds.set(c.code, row.id);
+  }
+
+  // --- Prerequisites: you cannot take the second course without the first.
+  const prereqs = [
+    { course: 'CSC201', requires: 'CSC102' },
+    { course: 'CSC102', requires: 'CSC101' },
+    { course: 'MTH102', requires: 'MTH101' },
+  ];
+  for (const p of prereqs) {
+    const courseId = courseIds.get(p.course);
+    const prerequisiteCourseId = courseIds.get(p.requires);
+    if (!courseId || !prerequisiteCourseId) continue;
+    await prisma.coursePrerequisite.upsert({
+      where: { courseId_prerequisiteCourseId: { courseId, prerequisiteCourseId } },
+      create: { courseId, prerequisiteCourseId },
+      update: {},
+    });
+  }
+
+  // --- Curriculum. Published, because only a published version can drive
+  // offerings and the demo needs offerings to exist.
+  const requirementSpecs = [
+    { code: 'CSC101', level: 100, semesterSequence: 1 },
+    { code: 'CSC103', level: 100, semesterSequence: 1 },
+    { code: 'MTH101', level: 100, semesterSequence: 1 },
+    { code: 'MTH103', level: 100, semesterSequence: 1 },
+    { code: 'GST101', level: 100, semesterSequence: 1 },
+    { code: 'GST105', level: 100, semesterSequence: 1 },
+    { code: 'CSC102', level: 100, semesterSequence: 2 },
+    { code: 'CSC104', level: 100, semesterSequence: 2 },
+    { code: 'MTH102', level: 100, semesterSequence: 2 },
+    { code: 'MTH104', level: 100, semesterSequence: 2 },
+    { code: 'GST102', level: 100, semesterSequence: 2 },
+    { code: 'GST107', level: 100, semesterSequence: 2 },
+    { code: 'CSC201', level: 200, semesterSequence: 1 },
+  ];
+
+  const version = await prisma.curriculumVersion.upsert({
+    where: {
+      programmeId_effectiveFromSessionId: {
+        programmeId: csc.id,
+        effectiveFromSessionId: sessionId,
+      },
+    },
+    create: {
+      programmeId: csc.id,
+      effectiveFromSessionId: sessionId,
+      name: 'B.Sc. Computer Science — 2024/2025',
+      status: CurriculumStatus.PUBLISHED,
+      publishedAt: new Date(),
+      notes: 'Demo curriculum. 15 units per level-100 semester.',
+    },
+    // Status is not forced on re-run: a version an administrator archived must
+    // stay archived, and a published one is frozen (INV-7) either way.
+    update: { name: 'B.Sc. Computer Science — 2024/2025' },
+  });
+
+  for (const r of requirementSpecs) {
+    const courseId = courseIds.get(r.code);
+    if (!courseId) continue;
+    await prisma.curriculumRequirement.upsert({
+      where: {
+        curriculumVersionId_courseId: { curriculumVersionId: version.id, courseId },
+      },
+      create: {
+        curriculumVersionId: version.id,
+        courseId,
+        level: r.level,
+        semesterSequence: r.semesterSequence,
+        requirementType: RequirementType.COMPULSORY,
+      },
+      update: { level: r.level, semesterSequence: r.semesterSequence },
+    });
+  }
+
+  // --- Offerings for the current (first) semester, OPEN so they are visible to
+  // students. The teaching department is the one that OWNS the course: MTH101 is
+  // taught by Mathematics even though this curriculum belongs to Computer
+  // Science, and the GST courses are university-wide, owned by nobody.
+  const firstSemesterId = semesters.get(1);
+  let offerings = 0;
+  if (firstSemesterId) {
+    for (const r of requirementSpecs.filter((x) => x.semesterSequence === 1)) {
+      const courseId = courseIds.get(r.code);
+      if (!courseId) continue;
+      const spec = courseSpecs.find((c) => c.code === r.code);
+      await prisma.courseOffering.upsert({
+        where: {
+          courseId_sessionId_semesterId: { courseId, sessionId, semesterId: firstSemesterId },
+        },
+        create: {
+          courseId,
+          sessionId,
+          semesterId: firstSemesterId,
+          departmentId: spec?.dept ? (deptId(spec.dept) ?? null) : null,
+          status: OfferingStatus.OPEN,
+          capacity: 120,
+        },
+        // Capacity and status are left alone on re-run: seatsTaken belongs to
+        // registration, and overwriting either could strand registered students.
+        update: {},
+      });
+      offerings++;
+    }
+  }
+
+  console.log(
+    `  demo academics: ${semesterSpecs.length} semester(s), ${courseSpecs.length} course(s), ` +
+      `${prereqs.length} prerequisite(s), ${requirementSpecs.length} requirement(s), ` +
+      `${offerings} offering(s)`,
+  );
+}
+
 // --- Orchestration ----------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -417,12 +855,16 @@ async function main(): Promise<void> {
   const permIdByKey = await seedPermissions();
   await seedRoles(permIdByKey);
   const activeStatusId = await seedStudentStatuses();
+  await seedCourseCategories();
+  await seedGradeScale();
+  await seedCreditPolicy();
   await seedBootstrapAdmin();
 
   if (seedDemo()) {
     console.log('- demo (SEED_DEMO active)');
     const { programmes, sessionId } = await seedDemoStructure();
     await seedDemoStudents(programmes, sessionId, activeStatusId);
+    await seedDemoAcademics(programmes, sessionId);
   } else {
     console.log('- demo: SKIPPED (production or SEED_DEMO=false)');
   }

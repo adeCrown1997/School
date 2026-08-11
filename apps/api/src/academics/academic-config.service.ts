@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthPrincipal } from '../common/auth-principal';
+import { CREDIT_POLICY_KEY, DEFAULT_CREDIT_POLICY } from './academic-config.constants';
 import {
   CreateCourseCategoryDto,
   CreateGradeScaleDto,
@@ -17,13 +18,9 @@ import {
   UpdateGradeScaleBandsDto,
 } from './dto/academics.dto';
 
-/** The SystemConfig key holding min/max registrable units. Enforced at
- *  registration commit (INV-8); stored here because it is policy, not code. */
-export const CREDIT_POLICY_KEY = 'academic.credit_policy';
-
-/** Fallback used when no policy row exists yet, so registration has a defined
- *  rule on a fresh install rather than silently allowing anything. */
-export const DEFAULT_CREDIT_POLICY: CreditPolicyDto = { minUnits: 15, maxUnits: 24 };
+// Re-exported so existing call sites keep importing these from the service; the
+// definitions live in a decorator-free module the Prisma seed can also import.
+export { CREDIT_POLICY_KEY, DEFAULT_CREDIT_POLICY } from './academic-config.constants';
 
 /**
  * Academic configuration: course categories, grading scales, and credit policy.

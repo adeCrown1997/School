@@ -152,7 +152,11 @@ export class CreateOfferingDto {
 
 export class UpdateOfferingDto {
   @IsOptional() @IsUUID() departmentId?: string;
-  @IsOptional() @IsInt() @Min(0) @Max(100000) capacity?: number;
+
+  /** Explicit null lifts the cap; omitting the field leaves it untouched. Both
+   *  have to be expressible, or a capacity once set could never be removed.
+   *  (@IsOptional skips its validators for null as well as undefined.) */
+  @IsOptional() @IsInt() @Min(0) @Max(100000) capacity?: number | null;
 
   @IsOptional()
   @IsString()
