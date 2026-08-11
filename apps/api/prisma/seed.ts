@@ -7,8 +7,8 @@
  *   • FOUNDATIONAL (always): the permission catalog, the system roles + their
  *     role→permission links, the student-status vocabulary, the academic
  *     reference data (course categories, the default grading scale, the credit
- *     policy), and ONE bootstrap SUPER_ADMIN read from BOOTSTRAP_ADMIN_* env
- *     (never hardcoded).
+ *     policy), the REGISTRATION approval chain (adviser → HOD), and ONE bootstrap
+ *     SUPER_ADMIN read from BOOTSTRAP_ADMIN_* env (never hardcoded).
  *   • DEMO (gated by SEED_DEMO): a small university structure, a handful of
  *     PENDING demo student master records for exercising activation/dashboards,
  *     and a worked academic example — semesters, a course catalogue with
@@ -26,6 +26,7 @@
  */
 import {
   ActivationState,
+  ApprovalDomain,
   CurriculumStatus,
   EntryMode,
   Gender,
@@ -297,6 +298,80 @@ async function seedCreditPolicy(): Promise<void> {
   console.log(
     `  credit policy: ${DEFAULT_CREDIT_POLICY.minUnits}-${DEFAULT_CREDIT_POLICY.maxUnits} units`,
   );
+}
+
+/**
+ * The REGISTRATION approval chain (docs/03 §9.6, docs/02 §5.4).
+ *
+ * The chain is DATA: RegistrationService reads the active REGISTRATION stages in
+ * `sequence` order and requires the actor to hold that stage's role at a scope
+ * containing the student. Shipping two stages is a decision, not a limitation —
+ * one signature would let a single person both approve and lock, which is exactly
+ * the separation of duties the four registration permission keys exist to enforce.
+ *
+ * Stages are created only when absent, and an institution that has deactivated or
+ * re-sequenced its chain keeps that: a re-seed must not silently re-open a stage
+ * the registry closed. Names are refreshed, since those are only labels.
+ */
+async function seedRegistrationApprovalChain(): Promise<void> {
+  const chain = [
+    {
+      sequence: 1,
+      key: 'ADVISER',
+      name: 'Academic Adviser',
+      roleKey: 'ACADEMIC_ADVISER',
+      // The adviser is measured against the student's DEPARTMENT: an adviser
+      // approves their own advisees, not any student who happens to be in the
+      // faculty.
+      scopeKind: ScopeType.DEPARTMENT,
+    },
+    {
+      sequence: 2,
+      key: 'HOD',
+      name: 'Head of Department',
+      roleKey: 'HOD',
+      scopeKind: ScopeType.DEPARTMENT,
+    },
+  ] as const;
+
+  for (const stage of chain) {
+    const role = await prisma.role.findUnique({
+      where: { key: stage.roleKey },
+      select: { id: true },
+    });
+    if (!role) throw new Error(`${stage.roleKey} role missing — seed roles first.`);
+
+    // Keyed on (domain, key) rather than (domain, sequence): the key is the
+    // stage's identity, and re-ordering a chain must not turn the adviser stage
+    // into the HOD stage.
+    const existing = await prisma.approvalStage.findUnique({
+      where: { domain_key: { domain: ApprovalDomain.REGISTRATION, key: stage.key } },
+      select: { id: true, sequence: true, isActive: true },
+    });
+    if (existing) {
+      await prisma.approvalStage.update({
+        where: { id: existing.id },
+        data: { name: stage.name, requiredRoleId: role.id },
+      });
+      console.log(
+        `  approval stage ${stage.key}: kept (sequence ${existing.sequence}, ${
+          existing.isActive ? 'active' : 'inactive'
+        })`,
+      );
+      continue;
+    }
+    await prisma.approvalStage.create({
+      data: {
+        domain: ApprovalDomain.REGISTRATION,
+        sequence: stage.sequence,
+        key: stage.key,
+        name: stage.name,
+        requiredRoleId: role.id,
+        scopeKind: stage.scopeKind,
+      },
+    });
+    console.log(`  approval stage ${stage.key}: created at sequence ${stage.sequence}`);
+  }
 }
 
 /** Create the single bootstrap SUPER_ADMIN from env, forced to rotate on login. */
@@ -858,6 +933,7 @@ async function main(): Promise<void> {
   await seedCourseCategories();
   await seedGradeScale();
   await seedCreditPolicy();
+  await seedRegistrationApprovalChain();
   await seedBootstrapAdmin();
 
   if (seedDemo()) {

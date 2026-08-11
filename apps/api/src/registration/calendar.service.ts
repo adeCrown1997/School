@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
-import { CalendarWindow, WindowType } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { CalendarWindow, ScopeType, WindowType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { AuthPrincipal } from '../common/auth-principal';
 
 /**
  * The academic calendar as the system clock (docs/03 §8.1).
@@ -43,9 +45,26 @@ export interface WindowDecision {
   message: string | null;
 }
 
+/** What a caller supplies to open a window. Dates arrive as ISO strings. */
+export interface CalendarWindowInput {
+  windowType: WindowType;
+  sessionId: string;
+  semesterId?: string | null;
+  scopeType?: ScopeType;
+  facultyId?: string | null;
+  departmentId?: string | null;
+  programmeId?: string | null;
+  opensAt: string | Date;
+  closesAt: string | Date;
+  notes?: string | null;
+}
+
 @Injectable()
 export class CalendarService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * Resolve the one window governing (type, session, semester) for a scope.
@@ -157,6 +176,199 @@ export class CalendarService {
       };
     }
     return { isOpen: true, window, reason: null, message: null };
+  }
+
+  // --- administration ------------------------------------------------------
+
+  /**
+   * List windows. Inactive rows are hidden by default but never deleted: a
+   * suspended window's dates are what was published, and an audit of "when could
+   * students register?" needs them to still exist.
+   */
+  async listWindows(filters: {
+    windowType?: WindowType;
+    sessionId?: string;
+    semesterId?: string;
+    includeInactive?: boolean;
+  }) {
+    return this.prisma.calendarWindow.findMany({
+      where: {
+        windowType: filters.windowType,
+        sessionId: filters.sessionId,
+        semesterId: filters.semesterId,
+        ...(filters.includeInactive ? {} : { isActive: true }),
+      },
+      include: {
+        session: { select: { id: true, name: true } },
+        semester: { select: { id: true, name: true } },
+        faculty: { select: { id: true, name: true } },
+        department: { select: { id: true, name: true } },
+        programme: { select: { id: true, name: true } },
+      },
+      orderBy: [{ opensAt: 'asc' }, { scopeType: 'asc' }],
+    });
+  }
+
+  async createWindow(input: CalendarWindowInput, actor: AuthPrincipal) {
+    const data = await this.validateWindow(input);
+    const created = await this.prisma.calendarWindow.create({
+      data: { ...data, notes: input.notes ?? null, createdById: actor.userId },
+    });
+    await this.audit.record({
+      actorId: actor.userId,
+      actorLabel: actor.email,
+      action: 'calendar.window.create',
+      entityType: 'CalendarWindow',
+      entityId: created.id,
+      after: this.snapshot(created),
+    });
+    return created;
+  }
+
+  /**
+   * Change a window's dates, notes or active flag.
+   *
+   * The SCOPE is deliberately immutable. Re-pointing a window from one department
+   * to another rewrites who was allowed to register when, and leaves no trace that
+   * the earlier audience ever had a window. A different audience is a different
+   * window: create it, and suspend this one.
+   */
+  async updateWindow(
+    id: string,
+    patch: {
+      opensAt?: string | Date;
+      closesAt?: string | Date;
+      notes?: string | null;
+      isActive?: boolean;
+    },
+    actor: AuthPrincipal,
+  ) {
+    const before = await this.prisma.calendarWindow.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException('Calendar window not found');
+
+    const opensAt =
+      patch.opensAt !== undefined ? this.parseDate(patch.opensAt, 'opensAt') : before.opensAt;
+    const closesAt =
+      patch.closesAt !== undefined ? this.parseDate(patch.closesAt, 'closesAt') : before.closesAt;
+    if (closesAt <= opensAt) {
+      throw new BadRequestException('A window must close after it opens');
+    }
+
+    const updated = await this.prisma.calendarWindow.update({
+      where: { id },
+      data: {
+        opensAt,
+        closesAt,
+        notes: patch.notes !== undefined ? patch.notes : before.notes,
+        isActive: patch.isActive !== undefined ? patch.isActive : before.isActive,
+      },
+    });
+    await this.audit.record({
+      actorId: actor.userId,
+      actorLabel: actor.email,
+      action: 'calendar.window.update',
+      entityType: 'CalendarWindow',
+      entityId: id,
+      before: this.snapshot(before),
+      after: this.snapshot(updated),
+    });
+    return updated;
+  }
+
+  /**
+   * Validate a window before it becomes data.
+   *
+   * The scope ids are NORMALIZED, not merely checked: a GLOBAL window carries no
+   * faculty id even if one was posted. resolveWindow matches on (scopeType, id),
+   * so a stray id is harmless today and a trap the first time someone reads the
+   * row and believes it.
+   */
+  private async validateWindow(input: CalendarWindowInput) {
+    const opensAt = this.parseDate(input.opensAt, 'opensAt');
+    const closesAt = this.parseDate(input.closesAt, 'closesAt');
+    if (closesAt <= opensAt) throw new BadRequestException('A window must close after it opens');
+
+    const session = await this.prisma.academicSession.findUnique({
+      where: { id: input.sessionId },
+      select: { id: true },
+    });
+    if (!session) throw new NotFoundException('Academic session not found');
+
+    if (input.semesterId) {
+      const semester = await this.prisma.semester.findUnique({
+        where: { id: input.semesterId },
+        select: { sessionId: true, name: true },
+      });
+      if (!semester) throw new NotFoundException('Semester not found');
+      if (semester.sessionId !== input.sessionId) {
+        throw new BadRequestException(`${semester.name} does not belong to that session`);
+      }
+    }
+
+    const scopeType = input.scopeType ?? ScopeType.GLOBAL;
+    let facultyId: string | null = null;
+    let departmentId: string | null = null;
+    let programmeId: string | null = null;
+
+    if (scopeType === ScopeType.FACULTY) {
+      facultyId = await this.requireScopeId('faculty', input.facultyId);
+    } else if (scopeType === ScopeType.DEPARTMENT) {
+      departmentId = await this.requireScopeId('department', input.departmentId);
+    } else if (scopeType === ScopeType.PROGRAMME) {
+      programmeId = await this.requireScopeId('programme', input.programmeId);
+    }
+
+    return {
+      windowType: input.windowType,
+      sessionId: input.sessionId,
+      semesterId: input.semesterId ?? null,
+      scopeType,
+      facultyId,
+      departmentId,
+      programmeId,
+      opensAt,
+      closesAt,
+    };
+  }
+
+  private async requireScopeId(
+    kind: 'faculty' | 'department' | 'programme',
+    id: string | null | undefined,
+  ): Promise<string> {
+    if (!id) {
+      throw new BadRequestException(`A ${kind}-scoped window must name the ${kind}`);
+    }
+    const exists =
+      kind === 'faculty'
+        ? await this.prisma.faculty.findUnique({ where: { id }, select: { id: true } })
+        : kind === 'department'
+          ? await this.prisma.department.findUnique({ where: { id }, select: { id: true } })
+          : await this.prisma.programme.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) throw new NotFoundException(`${this.capitalize(kind)} not found`);
+    return id;
+  }
+
+  private parseDate(value: string | Date, field: string): Date {
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) throw new BadRequestException(`${field} is not a valid date`);
+    return d;
+  }
+
+  /** Flat, JSON-safe view of a window for the audit trail. */
+  private snapshot(w: CalendarWindow) {
+    return {
+      windowType: w.windowType,
+      sessionId: w.sessionId,
+      semesterId: w.semesterId,
+      scopeType: w.scopeType,
+      facultyId: w.facultyId,
+      departmentId: w.departmentId,
+      programmeId: w.programmeId,
+      opensAt: w.opensAt.toISOString(),
+      closesAt: w.closesAt.toISOString(),
+      isActive: w.isActive,
+      notes: w.notes,
+    };
   }
 
   private label(windowType: WindowType): string {
