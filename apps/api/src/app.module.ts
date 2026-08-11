@@ -11,6 +11,7 @@ import { NotificationModule } from './notifications/notification.module';
 import { UsersModule } from './users/users.module';
 import { StructureModule } from './structure/structure.module';
 import { StudentsModule } from './students/students.module';
+import { AcademicsModule } from './academics/academics.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
 import { HealthController } from './common/health.controller';
 
@@ -55,6 +56,7 @@ import { HealthController } from './common/health.controller';
     UsersModule,
     StructureModule,
     StudentsModule,
+    AcademicsModule,
     DashboardsModule,
   ],
   controllers: [HealthController],

@@ -74,7 +74,9 @@ export class CoursesService {
         department: { select: { id: true, code: true, name: true } },
         prerequisites: {
           include: {
-            prerequisiteCourse: { select: { id: true, code: true, title: true, creditUnits: true } },
+            prerequisiteCourse: {
+              select: { id: true, code: true, title: true, creditUnits: true },
+            },
           },
         },
         relationshipsFrom: {
@@ -305,11 +307,7 @@ export class CoursesService {
    * prerequisites; reaching courseId means the new edge closes a loop. Returns
    * the offending chain in course codes for the error message, or null.
    */
-  private async findCycle(
-    tx: PrismaTx,
-    target: string,
-    from: string,
-  ): Promise<string[] | null> {
+  private async findCycle(tx: PrismaTx, target: string, from: string): Promise<string[] | null> {
     const codeOf = new Map<string, string>();
     const seen = new Set<string>([from]);
     // Each frontier entry carries the path that reached it, so the error can

@@ -12,7 +12,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 /**
  * Academic-structure DTOs.
@@ -160,6 +160,17 @@ export class UpdateOfferingDto {
   status?: 'DRAFT' | 'OPEN' | 'CLOSED';
 }
 
+/** Mount a whole semester's timetable from a published curriculum, rather than
+ *  one course at a time. The curriculum already states what must be taught. */
+export class GenerateOfferingsDto {
+  @IsUUID() curriculumVersionId!: string;
+  @IsUUID() sessionId!: string;
+  @IsUUID() semesterId!: string;
+
+  /** Applied to every generated offering. Omit for uncapped. */
+  @IsOptional() @IsInt() @Min(0) @Max(100000) capacity?: number;
+}
+
 // --- Academic configuration ------------------------------------------------
 
 export class CreateCourseCategoryDto {
@@ -230,4 +241,64 @@ export class SetConfigDto {
 export class CreditPolicyDto {
   @IsInt() @Min(0) @Max(60) minUnits!: number;
   @IsInt() @Min(1) @Max(60) maxUnits!: number;
+}
+
+// --- Query params ----------------------------------------------------------
+// Query strings arrive as strings, so numeric and boolean filters need coercing
+// before validation — without it `level=100` fails @IsInt.
+
+/**
+ * Coerce a query-string boolean.
+ *
+ * NOT `@Type(() => Boolean)`: that calls Boolean("false"), which is `true`, so
+ * `?includeInactive=false` would silently mean the opposite of what it says.
+ * Only the recognised true-ish spellings count as true.
+ */
+const BooleanQuery = () =>
+  Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === undefined || value === null || value === '') return undefined;
+    const v = String(value).trim().toLowerCase();
+    if (v === 'true' || v === '1' || v === 'yes') return true;
+    if (v === 'false' || v === '0' || v === 'no') return false;
+    return value; // let @IsBoolean reject anything else, rather than guessing
+  });
+
+export class ListCoursesQueryDto {
+  @IsOptional() @IsUUID() departmentId?: string;
+  @IsOptional() @IsUUID() categoryId?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(1200) level?: number;
+  @IsOptional() @IsString() @Length(1, 100) q?: string;
+
+  /** Inactive courses are hidden by default: the catalogue is mostly read by
+   *  people choosing what to register for, and a retired course is noise. */
+  @IsOptional() @BooleanQuery() @IsBoolean() includeInactive?: boolean;
+}
+
+export class ListCurriculumQueryDto {
+  @IsOptional() @IsUUID() programmeId?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^(DRAFT|PUBLISHED|ARCHIVED)$/, {
+    message: 'status must be DRAFT, PUBLISHED or ARCHIVED',
+  })
+  status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+}
+
+export class ListOfferingsQueryDto {
+  @IsOptional() @IsUUID() sessionId?: string;
+  @IsOptional() @IsUUID() semesterId?: string;
+  @IsOptional() @IsUUID() courseId?: string;
+  @IsOptional() @IsUUID() departmentId?: string;
+  @IsOptional() @IsString() @Length(1, 100) q?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^(DRAFT|OPEN|CLOSED)$/, { message: 'status must be DRAFT, OPEN or CLOSED' })
+  status?: 'DRAFT' | 'OPEN' | 'CLOSED';
+}
+
+export class IncludeInactiveQueryDto {
+  @IsOptional() @BooleanQuery() @IsBoolean() includeInactive?: boolean;
 }
