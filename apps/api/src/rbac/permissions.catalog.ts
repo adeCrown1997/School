@@ -44,6 +44,17 @@ export const PERMISSIONS = {
   ACADEMIC_CONFIG_VIEW: 'academic.config.view',
   ACADEMIC_CONFIG_MANAGE: 'academic.config.manage',
 
+  // Course registration (Phase 2). Five keys rather than a view/manage pair,
+  // because the approval chain is a SEPARATION OF DUTIES boundary: the adviser
+  // who approves must not be the officer who locks, and neither should be able
+  // to edit a student's course list on their behalf. Collapsing these would
+  // make that separation unexpressible.
+  REGISTRATION_VIEW: 'registration.view',
+  REGISTRATION_MANAGE: 'registration.manage', // add/drop on a student's behalf
+  REGISTRATION_APPROVE: 'registration.approve', // act at an approval stage
+  REGISTRATION_LOCK: 'registration.lock', // freeze an approved registration
+  REGISTRATION_EXCEPTION_REVIEW: 'registration.exception.review',
+
   // Student master records
   STUDENTS_VIEW: 'students.view',
   STUDENTS_CREATE: 'students.create',
@@ -170,6 +181,32 @@ export const PERMISSION_DEFS: PermissionDef[] = [
     key: PERMISSIONS.ACADEMIC_CONFIG_MANAGE,
     category: 'academic_config',
     description: 'Manage grading systems, course categories and credit policy',
+  },
+
+  {
+    key: PERMISSIONS.REGISTRATION_VIEW,
+    category: 'registration',
+    description: 'View course registrations in scope',
+  },
+  {
+    key: PERMISSIONS.REGISTRATION_MANAGE,
+    category: 'registration',
+    description: "Add/drop courses on a student's behalf",
+  },
+  {
+    key: PERMISSIONS.REGISTRATION_APPROVE,
+    category: 'registration',
+    description: 'Approve/reject a registration at an approval stage',
+  },
+  {
+    key: PERMISSIONS.REGISTRATION_LOCK,
+    category: 'registration',
+    description: 'Lock an approved registration (freezes units, issues the slip)',
+  },
+  {
+    key: PERMISSIONS.REGISTRATION_EXCEPTION_REVIEW,
+    category: 'registration',
+    description: 'Approve/reject registration exceptions (overrides, late registration)',
   },
 
   {

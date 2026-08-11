@@ -70,6 +70,13 @@ export const ROLE_DEFS: RoleDef[] = [
       P.OFFERINGS_MANAGE,
       P.ACADEMIC_CONFIG_VIEW,
       P.ACADEMIC_CONFIG_MANAGE,
+      // Registration: an administrator oversees the process and can correct a
+      // student's list, but does NOT hold registration.approve. The approval
+      // chain is an ACADEMIC judgement (adviser → HOD), and an actor who can
+      // both edit a course list and approve it is a one-person registration.
+      P.REGISTRATION_VIEW,
+      P.REGISTRATION_MANAGE,
+      P.REGISTRATION_LOCK,
       P.STUDENTS_VIEW,
       P.AUDIT_VIEW,
       P.DASHBOARD_ADMIN_VIEW,
@@ -92,6 +99,12 @@ export const ROLE_DEFS: RoleDef[] = [
       P.CHANGE_REQUESTS_REVIEW,
       P.STRUCTURE_VIEW,
       ...ACADEMIC_READONLY,
+      // Registry locks approved registrations and rules on exceptions (late
+      // registration, unit overrides). Not approve: the academic chain decides
+      // whether the course list is sound; registry makes it final.
+      P.REGISTRATION_VIEW,
+      P.REGISTRATION_LOCK,
+      P.REGISTRATION_EXCEPTION_REVIEW,
       P.AUDIT_VIEW,
       P.DASHBOARD_ADMIN_VIEW,
     ],
@@ -115,7 +128,12 @@ export const ROLE_DEFS: RoleDef[] = [
     name: 'Faculty Officer',
     description: 'Views students and academic structure within their faculty scope.',
     scopeKind: ScopeType.FACULTY,
-    permissions: [...STUDENT_READONLY, ...ACADEMIC_READONLY, P.DASHBOARD_ADMIN_VIEW],
+    permissions: [
+      ...STUDENT_READONLY,
+      ...ACADEMIC_READONLY,
+      P.DASHBOARD_ADMIN_VIEW,
+      P.REGISTRATION_VIEW,
+    ],
   },
   {
     key: 'HOD',
@@ -135,6 +153,10 @@ export const ROLE_DEFS: RoleDef[] = [
       P.COURSES_CREATE,
       P.COURSES_UPDATE,
       P.OFFERINGS_MANAGE,
+      // Second stage of the registration chain. Scope-narrowed like the writes
+      // above, so an HOD approves only their own department's students.
+      P.REGISTRATION_VIEW,
+      P.REGISTRATION_APPROVE,
       P.DASHBOARD_ADMIN_VIEW,
     ],
   },
@@ -143,7 +165,15 @@ export const ROLE_DEFS: RoleDef[] = [
     name: 'Academic Adviser',
     description: 'Views advisees and academic structure within their department/programme scope.',
     scopeKind: ScopeType.DEPARTMENT,
-    permissions: [...STUDENT_READONLY, ...ACADEMIC_READONLY],
+    // First stage of the registration chain — the adviser is the one who
+    // actually reads the course list against the curriculum. Cannot lock, so a
+    // registration always passes through a second pair of hands.
+    permissions: [
+      ...STUDENT_READONLY,
+      ...ACADEMIC_READONLY,
+      P.REGISTRATION_VIEW,
+      P.REGISTRATION_APPROVE,
+    ],
   },
   {
     key: 'LECTURER',
@@ -173,7 +203,10 @@ export const ROLE_DEFS: RoleDef[] = [
     // permission — so the STUDENT role must carry none. In particular it must
     // NOT hold change_requests.view, which guards the REGISTRY list endpoint
     // (all requests in scope); at this role's GLOBAL scopeKind that would let a
-    // student enumerate every student's change requests.
+    // student enumerate every student's change requests. The same reasoning
+    // covers registration.view, which guards the staff endpoint listing every
+    // registration in scope; a student reaches their OWN registration through
+    // /me/registration, gated on the principal's studentRecordId.
     permissions: [],
   },
 ];
