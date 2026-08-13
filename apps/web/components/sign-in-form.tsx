@@ -21,7 +21,7 @@
  */
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, ApiNetworkError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Alert, Field } from '@/components/ui';
 import type { LoginResult } from '@/lib/types';
@@ -65,14 +65,30 @@ export function SignInForm({
         password,
       });
       const me = await refresh();
-      if (result?.mustChangePassword ?? me?.mustChangePassword) {
+      if (!me) {
+        // Login itself succeeded; the browser dropped the session cookie (typical
+        // when Domain=localhost is set, or when the page is opened as 127.0.0.1
+        // while the API is on localhost).
+        setError(
+          'Sign-in succeeded but the session cookie was not stored. Open the portal at http://localhost:3000 (not 127.0.0.1) and confirm the API is running.',
+        );
+        setSubmitting(false);
+        return;
+      }
+      if (result?.mustChangePassword ?? me.mustChangePassword) {
         router.replace('/change-password');
         return;
       }
       // Route by who they ARE, not which page they used.
-      router.replace(me?.userType === 'STUDENT' ? '/student' : '/dashboard');
+      router.replace(me.userType === 'STUDENT' ? '/student' : '/dashboard');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to sign in. Please try again.');
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else if (err instanceof ApiNetworkError) {
+        setError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
+      }
       setSubmitting(false);
     }
   }

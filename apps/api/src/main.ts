@@ -26,14 +26,28 @@ async function bootstrap() {
 
   const config = app.get(ConfigService);
 
-  app.use(helmet());
+  // Helmet 8 defaults CORP to `same-origin`. The web app on :3000 calling the
+  // API on :4000 is cross-origin, so Chromium blocks the response as a generic
+  // network failure ("Failed to fetch") even though CORS is configured.
+  // `cross-origin` lets CORS remain the access control (WEB_ORIGIN + cookies).
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.use(cookieParser());
 
   app.setGlobalPrefix('api');
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
+  const webOrigin = config.get<string>('WEB_ORIGIN', 'http://localhost:3000');
+  const corsOrigins = new Set<string>([webOrigin]);
+  if (config.get<string>('NODE_ENV') !== 'production') {
+    corsOrigins.add('http://localhost:3000');
+    corsOrigins.add('http://127.0.0.1:3000');
+  }
   app.enableCors({
-    origin: config.get<string>('WEB_ORIGIN', 'http://localhost:3000'),
+    origin: [...corsOrigins],
     credentials: true, // allow the auth cookies
   });
 

@@ -82,19 +82,51 @@ npm run seed
 
 The seed is idempotent (upserts). It creates: the permission catalog and system
 roles, one bootstrap `SUPER_ADMIN` (from `.env`), the student-status vocabulary,
-and a small demo university structure (faculties SCI/ENG, departments CSC/MTH/EEE,
-programmes, and the `2024/2025` session). It creates **no** student records —
-those come from the authorized create/import flows.
+and — unless `NODE_ENV=production` or `SEED_DEMO=false` — a small demo university
+(faculties SCI/ENG, departments CSC/MTH/EEE, programmes, the `2024/2025` session)
+plus **PENDING demo student records**. Those students cannot sign in until they
+activate at `/activate`.
+
+Demo students (activation factors = matric + date of birth + surname; initial
+password after activation is the surname):
+
+| Matriculation number | Surname | Date of birth |
+| -------------------- | ------- | ------------- |
+| `CSC/2024/001`       | Adeyemi | 2005-03-14    |
+| `CSC/2024/002`       | Okoro   | 2004-11-02    |
+| `MTH/2024/003`       | Ibrahim | 2005-07-21    |
+| `EEE/2024/004`       | Balogun | 2003-12-09    |
 
 ## 6. Run
+
+Start **both** processes (login talks from the browser on :3000 to the API on :4000):
 
 ```bash
 npm run api:dev   # NestJS on http://localhost:4000  (API base: /api/v1)
 npm run web:dev   # Next.js on http://localhost:3000
 ```
 
-Log in at http://localhost:3000 with the bootstrap admin, then rotate its
-password immediately (the account is flagged `mustChangePassword`).
+Open **http://localhost:3000** (not `127.0.0.1` — CORS and cookies are bound to `WEB_ORIGIN`).
+
+### Staff / admin
+
+1. Go to http://localhost:3000/login/staff
+2. Identifier: the value of `BOOTSTRAP_ADMIN_EMAIL` in `.env`
+3. Password: the value of `BOOTSTRAP_ADMIN_PASSWORD` in `.env`
+4. On first login the account is flagged `mustChangePassword` — set a new password (at least 12 characters, mixed case, digit, symbol). After that, the env password no longer works; use the password you chose.
+
+`BOOTSTRAP_ADMIN_PASSWORD` must be at least 12 characters or the API will refuse to start.
+
+### Student
+
+Demo students are seeded **PENDING**. They have no login until activation:
+
+1. Go to http://localhost:3000/activate
+2. Enter a demo matriculation number, that student's date of birth, and surname (table above)
+3. Sign in at http://localhost:3000/login/student with the **matriculation number** and the **surname** as the initial password
+4. You will be sent to `/change-password`. After you set a permanent password, the surname no longer works.
+
+There is no student self-registration. Staff accounts are created by an administrator.
 
 ## 7. Verify the build
 

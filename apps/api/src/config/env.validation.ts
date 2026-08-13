@@ -20,7 +20,10 @@ const EnvSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
-  COOKIE_DOMAIN: z.string().default('localhost'),
+  // Optional. Leave unset for local HTTP — `Domain=localhost` is rejected by
+  // Chromium and the session cookie never sticks. Set only in production to a
+  // real parent domain (e.g. .university.edu).
+  COOKIE_DOMAIN: z.string().optional(),
 
   PASSWORD_MIN_LENGTH: z.coerce.number().int().min(8).default(12),
   ACTIVATION_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(30),

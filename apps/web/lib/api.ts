@@ -36,6 +36,20 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Thrown when `fetch` itself fails (API down, CORS/CORP blocked, DNS, etc.).
+ * Distinct from `ApiError` so UI can show "invalid credentials" for 401s
+ * instead of a false "API unreachable".
+ */
+export class ApiNetworkError extends Error {
+  constructor() {
+    super(
+      `Unable to reach the API at ${API_BASE_URL}. Start it with npm run api:dev and try again.`,
+    );
+    this.name = 'ApiNetworkError';
+  }
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
@@ -92,13 +106,18 @@ async function raw<T>(path: string, opts: RequestOptions = {}): Promise<ApiEnvel
     payload = JSON.stringify(body);
   }
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    headers,
-    body: payload,
-    credentials: 'include',
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      method,
+      headers,
+      body: payload,
+      credentials: 'include',
+      signal,
+    });
+  } catch {
+    throw new ApiNetworkError();
+  }
 
   if (res.status === 401 && retryOnUnauthorized && path !== '/auth/refresh') {
     // One silent refresh attempt, then retry the original request once.
