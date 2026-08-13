@@ -23,6 +23,8 @@ export default function StudentDetailPage() {
   const id = params.id;
   const { me } = useSession();
   const canStatus = can(me?.permissions, PERMISSIONS.STUDENTS_STATUS);
+  const canRegView = can(me?.permissions, PERMISSIONS.REGISTRATION_VIEW);
+  const canRegManage = can(me?.permissions, PERMISSIONS.REGISTRATION_MANAGE);
 
   const [record, setRecord] = useState<StudentRecord | null>(null);
   const [statuses, setStatuses] = useState<StudentStatusRef[]>([]);
@@ -76,9 +78,16 @@ export default function StudentDetailPage() {
         title={fullName}
         description={record.matriculationNumber}
         actions={
-          <Link href="/students" className="btn-secondary">
-            Back to list
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            {canRegView ? (
+              <Link href={`/registrations/students/${record.id}`} className="btn-primary">
+                {canRegManage ? 'Manage registration' : 'View registration'}
+              </Link>
+            ) : null}
+            <Link href="/students" className="btn-secondary">
+              Back to list
+            </Link>
+          </div>
         }
       />
 

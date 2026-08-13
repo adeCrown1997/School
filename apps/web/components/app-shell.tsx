@@ -45,6 +45,30 @@ const NAV: NavItem[] = [
     label: 'Registrations',
     anyOf: [PERMISSIONS.REGISTRATION_VIEW],
   },
+  {
+    href: '/registrations/windows',
+    label: 'Registration windows',
+    anyOf: [
+      PERMISSIONS.REGISTRATION_VIEW,
+      PERMISSIONS.STRUCTURE_MANAGE,
+      PERMISSIONS.ACADEMIC_CONFIG_MANAGE,
+    ],
+  },
+  {
+    href: '/academics/courses',
+    label: 'Course catalogue',
+    anyOf: [PERMISSIONS.COURSES_VIEW, PERMISSIONS.COURSES_CREATE],
+  },
+  {
+    href: '/academics/curriculum',
+    label: 'Curriculum',
+    anyOf: [PERMISSIONS.CURRICULUM_VIEW, PERMISSIONS.CURRICULUM_MANAGE],
+  },
+  {
+    href: '/academics/offerings',
+    label: 'Course offerings',
+    anyOf: [PERMISSIONS.OFFERINGS_VIEW, PERMISSIONS.OFFERINGS_MANAGE],
+  },
   { href: '/users', label: 'Staff accounts', anyOf: [PERMISSIONS.USERS_VIEW] },
   { href: '/roles', label: 'Roles & permissions', anyOf: [PERMISSIONS.ROLES_VIEW] },
   { href: '/structure', label: 'University structure', anyOf: [PERMISSIONS.STRUCTURE_VIEW] },

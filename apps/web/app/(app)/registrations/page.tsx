@@ -10,7 +10,13 @@ import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { can, PERMISSIONS } from '@/lib/permissions';
-import type { PaginatedRegistrations, RegistrationListItem, RegistrationStatus } from '@/lib/types';
+import type {
+  AcademicSession,
+  PaginatedRegistrations,
+  RegistrationListItem,
+  RegistrationStatus,
+  Semester,
+} from '@/lib/types';
 import { PageHeader, AccessNotice, EmptyState } from '@/components/page';
 import { Alert, Spinner, StatusBadge } from '@/components/ui';
 import { Pagination, type PageMeta } from '@/components/pagination';
@@ -30,6 +36,10 @@ export default function RegistrationsPage() {
 
   const [rows, setRows] = useState<RegistrationListItem[]>([]);
   const [meta, setMeta] = useState<PageMeta | null>(null);
+  const [sessions, setSessions] = useState<AcademicSession[]>([]);
+  const [semesters, setSemesters] = useState<Semester[]>([]);
+  const [sessionId, setSessionId] = useState('');
+  const [semesterId, setSemesterId] = useState('');
   const [status, setStatus] = useState<RegistrationStatus>('PENDING_APPROVAL');
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
@@ -37,6 +47,22 @@ export default function RegistrationsPage() {
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canView) return;
+    api.get<AcademicSession[]>('/structure/sessions').then(setSessions).catch(() => setSessions([]));
+  }, [canView]);
+
+  useEffect(() => {
+    if (!canView || !sessionId) {
+      setSemesters([]);
+      return;
+    }
+    api
+      .get<Semester[]>(`/structure/semesters?sessionId=${sessionId}`)
+      .then(setSemesters)
+      .catch(() => setSemesters([]));
+  }, [canView, sessionId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,6 +74,8 @@ export default function RegistrationsPage() {
         pageSize: '20',
       });
       if (search) params.set('search', search);
+      if (sessionId) params.set('sessionId', sessionId);
+      if (semesterId) params.set('semesterId', semesterId);
       const res = await api.get<PaginatedRegistrations>(`/registrations?${params.toString()}`);
       setRows(res.items);
       setMeta({
@@ -62,7 +90,7 @@ export default function RegistrationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [status, page, search]);
+  }, [status, page, search, sessionId, semesterId]);
 
   useEffect(() => {
     if (!canView) return;
@@ -78,6 +106,45 @@ export default function RegistrationsPage() {
         title="Registrations"
         description="Review student course registrations within your scope. Open a registration to approve or reject it."
       />
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        <select
+          className="input min-w-[10rem]"
+          value={sessionId}
+          aria-label="Filter by session"
+          onChange={(e) => {
+            setSessionId(e.target.value);
+            setSemesterId('');
+            setPage(1);
+          }}
+        >
+          <option value="">All sessions</option>
+          {sessions.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+              {s.isCurrent ? ' (current)' : ''}
+            </option>
+          ))}
+        </select>
+        <select
+          className="input min-w-[10rem]"
+          value={semesterId}
+          aria-label="Filter by semester"
+          disabled={!sessionId}
+          onChange={(e) => {
+            setSemesterId(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">All semesters</option>
+          {semesters.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+              {s.isCurrent ? ' (current)' : ''}
+            </option>
+          ))}
+        </select>
+      </div>
 
       <form
         className="mb-4 flex flex-wrap gap-2"

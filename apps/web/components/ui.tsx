@@ -118,6 +118,11 @@ export function StatusBadge({ state }: { state: string }) {
     REJECTED: 'bg-red-100 text-red-800',
     CANCELLED: 'bg-slate-100 text-slate-600',
     ACTIVE: 'bg-green-100 text-green-800',
+    INACTIVE: 'bg-slate-200 text-slate-600',
+    PUBLISHED: 'bg-green-100 text-green-800',
+    ARCHIVED: 'bg-slate-200 text-slate-600',
+    OPEN: 'bg-green-100 text-green-800',
+    CLOSED: 'bg-red-100 text-red-800',
   };
   return <span className={`badge ${map[state] ?? 'bg-slate-100 text-slate-700'}`}>{state}</span>;
 }

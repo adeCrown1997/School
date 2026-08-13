@@ -142,6 +142,14 @@ export interface AcademicSession {
   endDate: string;
   isCurrent: boolean;
 }
+
+export interface Semester {
+  id: string;
+  name: string;
+  sequence: number;
+  sessionId: string;
+  isCurrent?: boolean;
+}
 export interface UniversityTree extends NamedRef {
   faculties: Faculty[];
 }
@@ -429,4 +437,146 @@ export interface StaffRegistrationDetail extends RegistrationDetail {
     programme?: { id: string; code: string; name: string };
     department?: { id: string; name: string };
   };
+}
+
+export type RegistrationWindowType = 'REGISTRATION' | 'ADD_DROP' | 'LATE_REGISTRATION';
+
+/** Row from GET /registrations/windows */
+export interface CalendarWindowListItem {
+  id: string;
+  windowType: RegistrationWindowType;
+  scopeType: ScopeType;
+  opensAt: string;
+  closesAt: string;
+  isActive: boolean;
+  notes: string | null;
+  session: { id: string; name: string };
+  semester: { id: string; name: string } | null;
+  faculty: { id: string; name: string } | null;
+  department: { id: string; name: string } | null;
+  programme: { id: string; name: string } | null;
+}
+
+/** GET /registrations/policy */
+export interface RegistrationPolicy {
+  prerequisiteEnforcement: 'BLOCK' | 'WARN';
+  levelSpread: number;
+  allowRepeatForUpgrade: boolean;
+  enforceCapacity: boolean;
+  timetableClash: 'BLOCK' | 'WARN';
+  isDefault?: boolean;
+}
+
+// --- Academics (Phase 2) ---------------------------------------------------
+
+export interface CourseCategory {
+  id: string;
+  key: string;
+  label: string;
+  description?: string | null;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
+/** Row from GET /academics/courses */
+export interface CatalogueCourse {
+  id: string;
+  code: string;
+  title: string;
+  description: string | null;
+  creditUnits: number;
+  level: number;
+  isActive: boolean;
+  category?: { id: string; key: string; label: string } | null;
+  department?: { id: string; code: string; name: string } | null;
+}
+
+/** GET /academics/courses/:id — includes prerequisites and relationships. */
+export interface CourseDetail extends CatalogueCourse {
+  prerequisites: Array<{
+    id: string;
+    minGrade: string | null;
+    prerequisiteCourse: { id: string; code: string; title: string; creditUnits: number };
+  }>;
+  relationshipsFrom: Array<{
+    id: string;
+    type: 'EQUIVALENT' | 'EXCLUSION' | 'RECOMMENDED' | 'ANTIREQUISITE';
+    note: string | null;
+    relatedCourse: { id: string; code: string; title: string };
+  }>;
+}
+
+export type CurriculumStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+export type RequirementType = 'COMPULSORY' | 'ELECTIVE';
+
+/** Row from GET /academics/curriculum */
+export interface CurriculumListItem {
+  id: string;
+  name: string;
+  status: CurriculumStatus;
+  notes: string | null;
+  publishedAt: string | null;
+  programme: { id: string; code: string; name: string; departmentId: string };
+  effectiveFromSession: { id: string; name: string };
+  _count: { requirements: number };
+}
+
+export interface CurriculumRequirementRow {
+  id: string;
+  level: number;
+  semesterSequence: number;
+  requirementType: RequirementType;
+  creditUnits: number | null;
+  electiveGroup: string | null;
+  course: { id: string; code: string; title: string; creditUnits: number; isActive: boolean };
+}
+
+export interface CurriculumLevelSummary {
+  level: number;
+  compulsory: number;
+  elective: number;
+  total: number;
+}
+
+export interface CurriculumSummary {
+  totalUnits: number;
+  requirementCount: number;
+  byLevel: CurriculumLevelSummary[];
+}
+
+/** GET /academics/curriculum/:id */
+export interface CurriculumDetail {
+  id: string;
+  name: string;
+  status: CurriculumStatus;
+  notes: string | null;
+  publishedAt: string | null;
+  programme: { id: string; code: string; name: string; departmentId: string };
+  effectiveFromSession: { id: string; name: string };
+  requirements: CurriculumRequirementRow[];
+  summary: CurriculumSummary;
+}
+
+export type OfferingStatus = 'DRAFT' | 'OPEN' | 'CLOSED';
+
+/** Row from GET /academics/offerings and GET /academics/offerings/:id */
+export interface OfferingListItem {
+  id: string;
+  status: OfferingStatus;
+  capacity: number | null;
+  seatsTaken: number;
+  seatsAvailable: number | null;
+  isFull: boolean;
+  course: { id: string; code: string; title: string; creditUnits: number; level: number };
+  session: { id: string; name: string };
+  semester: { id: string; name: string; sequence: number };
+  department: { id: string; code: string; name: string } | null;
+}
+
+/** POST /academics/offerings/generate */
+export interface GenerateOfferingsResult {
+  created: number;
+  alreadyPresent: number;
+  skippedInactive: string[];
+  semester: { id: string; name: string; sequence: number };
 }
