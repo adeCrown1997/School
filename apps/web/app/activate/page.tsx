@@ -110,7 +110,10 @@ export default function ActivatePage() {
                 Repeated attempts with details that do not match will temporarily lock activation
                 for 15 minutes.
               </Alert>
-              <button className="btn-primary w-full" onClick={() => router.replace('/login')}>
+              <button
+                className="btn-primary w-full"
+                onClick={() => router.replace('/login/student')}
+              >
                 Go to sign in
               </button>
             </div>
@@ -165,7 +168,7 @@ export default function ActivatePage() {
         </div>
 
         <p className="mt-4 text-center text-sm">
-          <Link href="/login" className="text-brand-600 hover:underline">
+          <Link href="/login/student" className="text-brand-600 hover:underline">
             Back to sign in
           </Link>
         </p>

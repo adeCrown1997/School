@@ -108,10 +108,13 @@ export default function StudentDashboardPage() {
             ))}
           </ul>
           <div className="mt-4 space-y-2">
+            <Link href="/student/registration" className="btn-primary w-full">
+              Course registration
+            </Link>
             <Link href="/me/profile" className="btn-secondary w-full">
               View my profile
             </Link>
-            <Link href="/me/change-requests" className="btn-primary w-full">
+            <Link href="/me/change-requests" className="btn-secondary w-full">
               Request a correction
             </Link>
           </div>

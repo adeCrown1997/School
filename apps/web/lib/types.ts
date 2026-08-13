@@ -258,3 +258,175 @@ export interface ImportSummary {
   rows: RowReport[];
   imported?: number;
 }
+
+// --- Registration (Phase 2) ------------------------------------------------
+
+export type RegistrationStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'LOCKED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+export type RegistrationLineType = 'NEW' | 'CARRYOVER' | 'REPEAT' | 'ELECTIVE';
+
+export interface EligibilityGateResult {
+  gate: 'ACCOUNT' | 'WINDOW' | 'FEE_CLEARANCE' | 'HOLDS' | 'DURATION';
+  passed: boolean;
+  notEnforced?: boolean;
+  message: string | null;
+}
+
+export interface EligibilityReport {
+  eligible: boolean;
+  gates: EligibilityGateResult[];
+  student: {
+    id: string;
+    matriculationNumber: string;
+    fullName: string;
+    level: number;
+    facultyId: string;
+    departmentId: string;
+    programmeId: string;
+    curriculumVersionId: string | null;
+  };
+  window: { id: string; opensAt: string; closesAt: string } | null;
+}
+
+export interface CourseListItem {
+  offeringId: string;
+  courseId: string;
+  code: string;
+  title: string;
+  courseLevel: number;
+  creditUnits: number;
+  categoryKey: string | null;
+  lineType: RegistrationLineType;
+  preSelected: boolean;
+  removable: boolean;
+  alreadyRegistered: boolean;
+  selectable: boolean;
+  prerequisites: {
+    satisfied: boolean;
+    unmet: Array<{ code: string; title: string; message: string }>;
+    enforcement: 'BLOCK' | 'WARN';
+  };
+  capacity: {
+    capacity: number | null;
+    seatsTaken: number;
+    seatsAvailable: number | null;
+    isFull: boolean;
+  };
+  warnings: string[];
+}
+
+export interface CourseListResult {
+  level: number;
+  semesterSequence: number;
+  curriculumVersion: { id: string; name: string; status: string } | null;
+  items: CourseListItem[];
+  excluded: Array<{ courseId: string; code: string; title: string; reason: string; message: string }>;
+  totals: {
+    preSelectedUnits: number;
+    selectableUnits: number;
+    carryoverCount: number;
+    carryoverUnits: number;
+  };
+  warnings: string[];
+}
+
+export interface RegistrationLine {
+  id: string;
+  creditUnits: number;
+  lineType: RegistrationLineType;
+  state: string;
+  courseOffering: {
+    id: string;
+    capacity: number | null;
+    seatsTaken: number;
+    course: { id: string; code: string; title: string; level: number; creditUnits: number };
+  };
+}
+
+export interface RegistrationDetail {
+  id: string;
+  status: RegistrationStatus;
+  level: number;
+  totalUnits: number;
+  minUnits: number | null;
+  maxUnits: number | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  lockedAt: string | null;
+  rejectReason: string | null;
+  session: { id: string; name: string };
+  semester: { id: string; name: string; sequence: number };
+  curriculumVersion: { id: string; name: string; status: string } | null;
+  lines: RegistrationLine[];
+  approvals: Array<{
+    id: string;
+    decision: string;
+    comment: string | null;
+    stage: { key: string; name: string; sequence: number };
+  }>;
+}
+
+/** GET /me/registration — eligibility, course list and current registration. */
+export interface RegistrationContext {
+  session: { id: string; name: string };
+  semester: { id: string; name: string; sequence: number };
+  eligibility: EligibilityReport;
+  courses: CourseListResult;
+  registration: RegistrationDetail | null;
+}
+
+export interface RegistrationHistoryItem {
+  id: string;
+  status: RegistrationStatus;
+  totalUnits: number;
+  session: { id: string; name: string };
+  semester: { id: string; name: string; sequence: number };
+  _count: { lines: number };
+}
+
+/** Row from GET /registrations (staff list). */
+export interface RegistrationListItem {
+  id: string;
+  status: RegistrationStatus;
+  level: number;
+  totalUnits: number;
+  submittedAt: string | null;
+  studentRecord: {
+    id: string;
+    matriculationNumber: string;
+    surname: string;
+    firstName: string;
+    currentLevel: number;
+    programme?: { code: string };
+  };
+  semester: { id: string; name: string; sequence: number };
+  _count: { lines: number; approvals: number };
+}
+
+/** Paginated staff list envelope (nested in `data`, not `meta`). */
+export interface PaginatedRegistrations {
+  items: RegistrationListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** GET /registrations/:id — includes the student record for staff review. */
+export interface StaffRegistrationDetail extends RegistrationDetail {
+  studentRecord?: {
+    id: string;
+    matriculationNumber: string;
+    surname: string;
+    firstName: string;
+    otherNames: string | null;
+    currentLevel: number;
+    programme?: { id: string; code: string; name: string };
+    department?: { id: string; name: string };
+  };
+}

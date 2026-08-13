@@ -111,6 +111,8 @@ export function StatusBadge({ state }: { state: string }) {
   const map: Record<string, string> = {
     ACTIVATED: 'bg-green-100 text-green-800',
     PENDING: 'bg-amber-100 text-amber-900',
+    PENDING_APPROVAL: 'bg-amber-100 text-amber-900',
+    DRAFT: 'bg-slate-100 text-slate-700',
     LOCKED: 'bg-red-100 text-red-800',
     APPROVED: 'bg-green-100 text-green-800',
     REJECTED: 'bg-red-100 text-red-800',

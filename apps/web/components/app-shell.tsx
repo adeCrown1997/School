@@ -26,6 +26,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', anyOf: [PERMISSIONS.DASHBOARD_ADMIN_VIEW] },
   { href: '/student', label: 'My dashboard', studentOnly: true },
+  { href: '/student/registration', label: 'Course registration', studentOnly: true },
   { href: '/me/profile', label: 'My profile', studentOnly: true },
   { href: '/me/change-requests', label: 'My change requests', studentOnly: true },
   {
@@ -38,6 +39,11 @@ const NAV: NavItem[] = [
     href: '/change-requests',
     label: 'Change requests',
     anyOf: [PERMISSIONS.CHANGE_REQUESTS_VIEW],
+  },
+  {
+    href: '/registrations',
+    label: 'Registrations',
+    anyOf: [PERMISSIONS.REGISTRATION_VIEW],
   },
   { href: '/users', label: 'Staff accounts', anyOf: [PERMISSIONS.USERS_VIEW] },
   { href: '/roles', label: 'Roles & permissions', anyOf: [PERMISSIONS.ROLES_VIEW] },

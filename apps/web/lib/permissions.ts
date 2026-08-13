@@ -50,6 +50,12 @@ export const PERMISSIONS = {
   CHANGE_REQUESTS_VIEW: 'change_requests.view',
   CHANGE_REQUESTS_REVIEW: 'change_requests.review',
 
+  REGISTRATION_VIEW: 'registration.view',
+  REGISTRATION_MANAGE: 'registration.manage',
+  REGISTRATION_APPROVE: 'registration.approve',
+  REGISTRATION_LOCK: 'registration.lock',
+  REGISTRATION_EXCEPTION_REVIEW: 'registration.exception.review',
+
   AUDIT_VIEW: 'audit.view',
 
   DASHBOARD_ADMIN_VIEW: 'dashboard.admin.view',
