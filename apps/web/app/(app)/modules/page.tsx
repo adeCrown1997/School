@@ -67,6 +67,13 @@ const PLANNED_MODULES: ModuleInfo[] = [
     href: '/academics/offerings',
     permission: PERMISSIONS.OFFERINGS_VIEW,
   },
+  {
+    name: 'Academic configuration',
+    description: 'Course categories, grading scales and credit-unit policy.',
+    audience: 'staff',
+    href: '/academics/config',
+    permission: PERMISSIONS.ACADEMIC_CONFIG_VIEW,
+  },
   { name: 'Grading & Assessment', description: 'Record and moderate student scores.', audience: 'staff' },
   { name: 'Timetabling', description: 'Lecture and exam scheduling.', audience: 'staff' },
   { name: 'Hostel & Accommodation', description: 'Room allocation and management.', audience: 'all' },

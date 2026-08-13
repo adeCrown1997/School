@@ -622,8 +622,15 @@ async function seedDemoStudents(
     }
   }
   console.log(
-    `  demo students: ${created} created, ${demo.length - created} already present (all PENDING)`,
+    `  demo students: ${created} created, ${demo.length - created} already present (all PENDING until activated)`,
   );
+  console.log('  demo activation (http://localhost:3000/activate), then student sign-in:');
+  for (const d of demo) {
+    const dob = d.dateOfBirth.toISOString().slice(0, 10);
+    console.log(
+      `    ${d.matriculationNumber}  surname=${d.surname}  DOB=${dob}  (initial password = surname)`,
+    );
+  }
 }
 
 /**

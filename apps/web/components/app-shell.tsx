@@ -69,6 +69,11 @@ const NAV: NavItem[] = [
     label: 'Course offerings',
     anyOf: [PERMISSIONS.OFFERINGS_VIEW, PERMISSIONS.OFFERINGS_MANAGE],
   },
+  {
+    href: '/academics/config',
+    label: 'Academic config',
+    anyOf: [PERMISSIONS.ACADEMIC_CONFIG_VIEW, PERMISSIONS.ACADEMIC_CONFIG_MANAGE],
+  },
   { href: '/users', label: 'Staff accounts', anyOf: [PERMISSIONS.USERS_VIEW] },
   { href: '/roles', label: 'Roles & permissions', anyOf: [PERMISSIONS.ROLES_VIEW] },
   { href: '/structure', label: 'University structure', anyOf: [PERMISSIONS.STRUCTURE_VIEW] },

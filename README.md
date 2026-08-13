@@ -51,6 +51,11 @@ npm run api:dev                                    # http://localhost:4000
 npm run web:dev                                    # http://localhost:3000
 ```
 
+Open **http://localhost:3000** (not `127.0.0.1`). Sign in as staff at `/login/staff`
+with `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` from `.env`. Demo students
+must first activate at `/activate` (see [docs/28-DEV-SETUP.md](docs/28-DEV-SETUP.md)),
+then sign in at `/login/student` with their matriculation number and surname.
+
 Full step-by-step (including database roles and secret generation) is in
 [docs/28-DEV-SETUP.md](docs/28-DEV-SETUP.md).
 

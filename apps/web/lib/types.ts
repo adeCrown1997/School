@@ -476,6 +476,36 @@ export interface CourseCategory {
   description?: string | null;
   sortOrder?: number;
   isActive?: boolean;
+  _count?: { courses: number };
+}
+
+/** One interval of a grade scale. Prisma Decimals arrive as strings. */
+export interface GradeBand {
+  id: string;
+  grade: string;
+  minScore: string | number;
+  maxScore: string | number;
+  gradePoint: string | number;
+  sortOrder: number;
+}
+
+/** GET /academics/grade-scales and GET /academics/grade-scales/:id */
+export interface GradeScale {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  isDefault: boolean;
+  isActive: boolean;
+  bands: GradeBand[];
+  _count?: { gradeRecords: number };
+}
+
+/** GET/POST /academics/credit-policy — min/max units per semester (INV-8). */
+export interface CreditPolicy {
+  minUnits: number;
+  maxUnits: number;
+  isDefault: boolean;
 }
 
 /** Row from GET /academics/courses */
