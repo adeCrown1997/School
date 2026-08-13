@@ -148,8 +148,8 @@ export const api = {
   async patch<T>(path: string, body?: unknown): Promise<T> {
     return (await raw<T>(path, { method: 'PATCH', body })).data;
   },
-  async del<T>(path: string): Promise<T> {
-    return (await raw<T>(path, { method: 'DELETE' })).data;
+  async del<T>(path: string, body?: unknown): Promise<T> {
+    return (await raw<T>(path, { method: 'DELETE', body })).data;
   },
   async upload<T>(path: string, form: FormData): Promise<T> {
     return (await raw<T>(path, { method: 'POST', form })).data;
