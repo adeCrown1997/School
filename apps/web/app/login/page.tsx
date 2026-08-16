@@ -13,17 +13,18 @@
  * correctly; the choice just puts the right field and guidance in front of them.
  */
 import Link from 'next/link';
+import { ChevronRightIcon, GraduationCapIcon, LandmarkIcon, UsersIcon } from '@/components/icons';
 
 const OPTIONS = [
   {
     href: '/login/student',
-    icon: '🎓',
+    icon: GraduationCapIcon,
     title: 'Student sign-in',
     subtitle: 'Sign in with your matriculation number',
   },
   {
     href: '/login/staff',
-    icon: '🏛️',
+    icon: UsersIcon,
     title: 'Staff sign-in',
     subtitle: 'Sign in with your work email address',
   },
@@ -31,44 +32,59 @@ const OPTIONS = [
 
 export default function LoginChooserPage() {
   return (
-    <main className="grid min-h-screen place-items-center px-4">
-      <div className="w-full max-w-md">
-        <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-brand-700">University ePortal</h1>
+    <main className="auth-bg grid min-h-screen place-items-center px-4 py-12">
+      <div className="w-full max-w-md animate-fade-up">
+        <div className="mb-8 text-center">
+          <span
+            aria-hidden
+            className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-lg shadow-brand-600/25"
+          >
+            <LandmarkIcon size={26} />
+          </span>
+          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+            University ePortal
+          </h1>
           <p className="mt-1 text-sm text-slate-500">Choose how to sign in</p>
         </div>
 
         <div className="space-y-3">
-          {OPTIONS.map((o) => (
-            <Link
-              key={o.href}
-              href={o.href}
-              className="card flex items-center gap-4 p-5 transition hover:border-brand-300 hover:shadow-md"
-            >
-              <span aria-hidden className="text-2xl">
-                {o.icon}
-              </span>
-              <span className="flex-1">
-                <span className="block font-semibold text-slate-900">{o.title}</span>
-                <span className="block text-sm text-slate-500">{o.subtitle}</span>
-              </span>
-              <span aria-hidden className="text-xl text-slate-300">
-                ›
-              </span>
-            </Link>
-          ))}
+          {OPTIONS.map((o) => {
+            const Icon = o.icon;
+            return (
+              <Link
+                key={o.href}
+                href={o.href}
+                className="group card flex items-center gap-4 p-5 transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-lift"
+              >
+                <span
+                  aria-hidden
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 transition-colors group-hover:bg-brand-600 group-hover:text-white"
+                >
+                  <Icon size={20} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold text-slate-900">{o.title}</span>
+                  <span className="block text-sm text-slate-500">{o.subtitle}</span>
+                </span>
+                <ChevronRightIcon
+                  size={18}
+                  className="shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-brand-500"
+                />
+              </Link>
+            );
+          })}
         </div>
 
         <div className="mt-6 flex items-center justify-between text-sm">
-          <Link href="/forgot-password" className="text-brand-600 hover:underline">
+          <Link href="/forgot-password" className="font-medium text-brand-600 hover:underline">
             Forgot password?
           </Link>
-          <Link href="/activate" className="text-brand-600 hover:underline">
+          <Link href="/activate" className="font-medium text-brand-600 hover:underline">
             Activate student account
           </Link>
         </div>
 
-        <p className="mt-4 text-center text-xs text-slate-400">
+        <p className="mt-5 text-center text-xs leading-5 text-slate-400">
           Staff accounts are created by an administrator. Students activate the account issued by
           the university — no self-registration.
         </p>

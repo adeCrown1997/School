@@ -20,6 +20,7 @@ import type {
 import { PageHeader, AccessNotice, EmptyState } from '@/components/page';
 import { Alert, Spinner, StatusBadge } from '@/components/ui';
 import { Pagination, type PageMeta } from '@/components/pagination';
+import { ChevronRightIcon, SearchIcon } from '@/components/icons';
 
 const STATUSES: RegistrationStatus[] = [
   'PENDING_APPROVAL',
@@ -147,26 +148,33 @@ export default function RegistrationsPage() {
       </div>
 
       <form
-        className="mb-4 flex flex-wrap gap-2"
+        className="mb-4 flex flex-wrap gap-2.5"
         onSubmit={(e) => {
           e.preventDefault();
           setSearch(searchInput.trim());
           setPage(1);
         }}
       >
-        <input
-          className="input max-w-xs flex-1"
-          placeholder="Search matric no. or name…"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-        />
+        <div className="relative min-w-[14rem] max-w-xs flex-1">
+          <SearchIcon
+            size={16}
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <input
+            className="input pl-9"
+            placeholder="Search matric no. or name…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+        </div>
         <button type="submit" className="btn-secondary">
           Search
         </button>
         {search ? (
           <button
             type="button"
-            className="btn-secondary"
+            className="btn-ghost"
             onClick={() => {
               setSearchInput('');
               setSearch('');
@@ -178,21 +186,32 @@ export default function RegistrationsPage() {
         ) : null}
       </form>
 
-      <div className="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="Filter by status">
-        {STATUSES.map((s) => (
-          <button
-            key={s}
-            role="tab"
-            aria-selected={status === s}
-            className={`badge ${status === s ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-600'}`}
-            onClick={() => {
-              setStatus(s);
-              setPage(1);
-            }}
-          >
-            {s.replace(/_/g, ' ')}
-          </button>
-        ))}
+      <div
+        className="mb-5 flex flex-wrap gap-2"
+        role="tablist"
+        aria-label="Filter by status"
+      >
+        {STATUSES.map((s) => {
+          const selected = status === s;
+          return (
+            <button
+              key={s}
+              role="tab"
+              aria-selected={selected}
+              className={`badge cursor-pointer rounded-full px-3 py-1.5 text-xs transition-all ${
+                selected
+                  ? 'bg-brand-600 text-white shadow-sm ring-1 ring-inset ring-brand-600'
+                  : 'bg-white text-slate-600 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 hover:text-slate-900 hover:ring-slate-300'
+              }`}
+              onClick={() => {
+                setStatus(s);
+                setPage(1);
+              }}
+            >
+              {s.replace(/_/g, ' ')}
+            </button>
+          );
+        })}
       </div>
 
       {error ? (
@@ -221,28 +240,46 @@ export default function RegistrationsPage() {
 function RegistrationRow({ item }: { item: RegistrationListItem }) {
   const student = item.studentRecord;
   const name = student ? `${student.surname} ${student.firstName}` : 'Unknown student';
+  const initials = student
+    ? [student.firstName, student.surname].filter(Boolean).map((w) => w[0]?.toUpperCase()).join('')
+    : '';
 
   return (
-    <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
-      <div className="min-w-0">
-        <p className="text-sm font-semibold text-slate-800">
-          {name}
-          {student ? ` · ${student.matriculationNumber}` : null}
-        </p>
-        <p className="text-xs text-slate-500">
-          Level {item.level} · {item.semester.name} · {item.totalUnits} units ·{' '}
-          {item._count.lines} course{item._count.lines === 1 ? '' : 's'}
-          {item.submittedAt
-            ? ` · submitted ${new Date(item.submittedAt).toLocaleString()}`
-            : null}
-        </p>
+    <Link
+      href={`/registrations/${item.id}`}
+      className="group card flex flex-wrap items-center justify-between gap-3 p-5 transition-all hover:-translate-y-px hover:border-brand-200 hover:shadow-card-hover"
+    >
+      <div className="flex min-w-0 items-center gap-3.5">
+        <span
+          aria-hidden
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand-700"
+        >
+          {initials || '–'}
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900">
+            {name}
+            {student ? <span className="font-normal text-slate-500"> · {student.matriculationNumber}</span> : null}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Level {item.level} · {item.semester.name} · {item.totalUnits} units ·{' '}
+            {item._count.lines} course{item._count.lines === 1 ? '' : 's'}
+            {item.submittedAt
+              ? ` · submitted ${new Date(item.submittedAt).toLocaleString()}`
+              : null}
+          </p>
+        </div>
       </div>
       <div className="flex items-center gap-3">
         <StatusBadge state={item.status} />
-        <Link href={`/registrations/${item.id}`} className="btn-primary">
+        <span className={`${item.status === 'PENDING_APPROVAL' ? 'btn-primary' : 'btn-secondary'}`}>
           {item.status === 'PENDING_APPROVAL' ? 'Review' : 'View'}
-        </Link>
+          <ChevronRightIcon
+            size={15}
+            className="transition-transform group-hover:translate-x-0.5"
+          />
+        </span>
       </div>
-    </div>
+    </Link>
   );
 }

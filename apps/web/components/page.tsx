@@ -8,6 +8,7 @@
  */
 import Link from 'next/link';
 import { Alert } from './ui';
+import { InboxIcon, ShieldCheckIcon } from './icons';
 
 export function PageHeader({
   title,
@@ -19,37 +20,52 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{title}</h1>
-        {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+    <div className="mb-6 flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+      <div className="min-w-0 animate-fade-up">
+        <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
+        {description ? (
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">{description}</p>
+        ) : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex flex-wrap items-center gap-2.5">{actions}</div> : null}
     </div>
   );
 }
 
 export function AccessNotice({ message }: { message?: string }) {
   return (
-    <Alert kind="warning" title="You don’t have access to this area">
-      <p>
+    <div className="card mx-auto mt-10 max-w-lg animate-fade-up p-8 text-center">
+      <div
+        aria-hidden
+        className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-500"
+      >
+        <ShieldCheckIcon size={24} />
+      </div>
+      <h1 className="font-display text-lg font-bold text-slate-900">
+        You don&apos;t have access to this area
+      </h1>
+      <p className="mt-2 text-sm leading-6 text-slate-500">
         {message ??
           'Your account is not authorized to view this. If you believe this is an error, contact an administrator.'}
       </p>
-      <p className="mt-2">
-        <Link href="/dashboard" className="text-brand-700 underline">
-          Return to your dashboard
-        </Link>
-      </p>
-    </Alert>
+      <Link href="/dashboard" className="btn-secondary mt-6">
+        Return to your dashboard
+      </Link>
+    </div>
   );
 }
 
 export function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="card grid place-items-center px-6 py-12 text-center">
-      <p className="text-sm font-medium text-slate-700">{title}</p>
-      {children ? <div className="mt-1 text-sm text-slate-500">{children}</div> : null}
+    <div className="card animate-fade-up grid place-items-center px-6 py-14 text-center">
+      <div
+        aria-hidden
+        className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"
+      >
+        <InboxIcon size={24} />
+      </div>
+      <p className="text-sm font-semibold text-slate-700">{title}</p>
+      {children ? <div className="mt-1 max-w-sm text-sm leading-6 text-slate-500">{children}</div> : null}
     </div>
   );
 }

@@ -4,6 +4,14 @@
 
 :root {
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  --font-display: 'Segoe UI Semibold', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    Arial, sans-serif;
+
+  /* Brand-driven focus ring + skeleton wash, centralised so chrome and content
+     stay coherent when the palette changes. */
+  --ring-brand: rgb(47 102 240 / 0.18);
+  --skeleton-base: #e8edf5;
+  --skeleton-shine: #f4f7fb;
 }
 
 html,
@@ -12,47 +20,292 @@ body {
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply bg-slate-100 text-slate-900 antialiased;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  text-rendering: optimizeLegibility;
 }
 
-/* Visible keyboard focus everywhere (accessibility). */
+/* Visible keyboard focus everywhere (accessibility). The ring, not just an
+   outline, so focus is legible on dark chrome too. */
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid theme('colors.brand.500');
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px theme('colors.navy.900'), 0 0 0 4px var(--ring-brand);
+  @apply rounded-sm;
+}
+
+/* Respect motion preferences globally: every decorative animation in the app
+   collapses to instant states (functional motion like spinners is re-enabled
+   explicitly where needed). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+::selection {
+  @apply bg-brand-100 text-brand-900;
 }
 
 @layer components {
+  /* -- Form controls --------------------------------------------------------- */
   .input {
-    @apply block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm
-      placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1
-      focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500;
+    @apply block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm
+      transition placeholder:text-slate-400 hover:border-slate-400 focus:border-brand-500 focus:outline-none
+      focus:ring-2 focus:ring-brand-500/25 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100
+      disabled:text-slate-500;
+  }
+  /* Selects get a consistent chrome-native dropdown arrow in the brand grey. */
+  select.input {
+    @apply appearance-none bg-no-repeat pr-9;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 0.75rem center;
   }
   .label {
-    @apply mb-1 block text-sm font-medium text-slate-700;
+    @apply mb-1.5 block text-[13px] font-semibold tracking-tight text-slate-700;
   }
+
+  /* -- Buttons: one visual grammar. Primary = filled brand (the ONE call to
+     action per surface), secondary = white with border, danger = destructive
+     red, ghost = chrome actions (headers, sidebar). */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold
-      transition focus:outline-none disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold
+      transition-all duration-150 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+    @apply btn bg-brand-600 text-white shadow-sm hover:bg-brand-700 hover:shadow-md focus-visible:ring-2
+      focus-visible:ring-brand-500/40;
   }
   .btn-secondary {
-    @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+    @apply btn border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-slate-400 hover:bg-slate-50
+      hover:text-slate-900;
   }
   .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700;
+    @apply btn bg-red-600 text-white shadow-sm hover:bg-red-700 focus-visible:ring-2 focus-visible:ring-red-500/40;
   }
+  .btn-ghost {
+    @apply btn text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+  /* Icon-only square button (row actions, chips). */
+  .btn-icon {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100
+      hover:text-slate-900 focus:outline-none;
+  }
+
+  /* -- Surfaces ---------------------------------------------------------------*/
   .card {
-    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+    @apply rounded-xl border border-slate-200/80 bg-white shadow-card;
   }
+  .card-title {
+    @apply text-sm font-semibold tracking-tight text-slate-900;
+  }
+  .card-subtitle {
+    @apply mt-0.5 text-[13px] leading-5 text-slate-500;
+  }
+
   .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold leading-none;
+  }
+
+  /* -- Data tables --------------------------------------------------------------
+     Tables are work surfaces: roomy rows, quiet headers, hover affordance. Pages
+     put the table inside .card.p-0 with its own wrapper (.table-wrap) so the
+     card's rounding clips the header background. */
+  .table-wrap {
+    @apply overflow-x-auto;
+  }
+  .table-wrap table {
+    @apply w-full text-sm;
+  }
+  .table-wrap thead th {
+    @apply whitespace-nowrap border-b border-slate-200 bg-slate-50/80 px-4 py-3 text-left text-xs font-semibold
+      uppercase tracking-wider text-slate-500;
+  }
+  .table-wrap tbody td {
+    @apply px-4 py-3.5 align-middle text-slate-700;
+  }
+  .table-wrap tbody tr {
+    @apply border-b border-slate-100 transition-colors last:border-0 hover:bg-brand-50/40;
+  }
+
+  /* Legacy list tables rendered as <div class="card overflow-x-auto p-0"><table>.
+     Give them the same header/row treatment as .table-wrap so every workhorse
+     table matches without touching each page. */
+  .card.overflow-x-auto.p-0 table {
+    @apply w-full text-sm;
+  }
+  .card.overflow-x-auto.p-0 thead th {
+    @apply whitespace-nowrap border-b border-slate-200 bg-slate-50/80 px-4 py-3 text-left text-xs font-semibold
+      uppercase tracking-wider text-slate-500;
+  }
+  .card.overflow-x-auto.p-0 tbody td {
+    @apply px-4 py-3.5 align-middle text-slate-700;
+  }
+  .card.overflow-x-auto.p-0 tbody tr {
+    @apply border-b border-slate-100 transition-colors last:border-0 hover:bg-brand-50/40;
+  }
+
+  /* -- Skeleton loading -----------------------------------------------------------
+     Determinate-shaped placeholder for async surfaces; keeps layout from jumping
+     and reads as "loading", never as missing data. */
+  .skeleton {
+    @apply animate-shimmer rounded-md bg-slate-200;
+    background-image: linear-gradient(
+      90deg,
+      var(--skeleton-base) 25%,
+      var(--skeleton-shine) 50%,
+      var(--skeleton-base) 75%
+    );
+    background-size: 200% 100%;
   }
 }
 
 /* Read-only PROTECTED identity field: visually distinct so it is unmistakably
-   not editable in the UI (the backend enforces this regardless). */
+   not editable in the UI (the backend enforces this regardless of this flag). */
 .protected-field {
-  @apply cursor-not-allowed border-dashed border-slate-300 bg-slate-100 text-slate-600;
+  @apply cursor-not-allowed border-dashed border-slate-300 bg-slate-50 text-slate-600;
+}
+
+/* Shared backdrop for the unauthenticated flows (sign-in, activation,
+   password reset): the same gentle brand wash everywhere keeps the portal
+   entry feeling like one place, and the subtle top light gives depth without
+   decoration. */
+.auth-bg {
+  background:
+    radial-gradient(60rem 30rem at 50% -12rem, rgb(47 102 240 / 0.09), transparent),
+    linear-gradient(to bottom, theme('colors.slate.50'), theme('colors.slate.100'));
+}
+
+/* Landing page: the school's front gate (components/school-gate.tsx). The two
+   leaves swing open once on load and settle; motion is purely decorative and
+   is removed entirely under prefers-reduced-motion (the gate renders open). */
+.gate-scene {
+  perspective: 900px;
+}
+.gate-leaf {
+  transform-box: fill-box;
+  animation-duration: 1.9s;
+  animation-delay: 0.7s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+.gate-leaf-left {
+  transform-origin: 0% 50%;
+  animation-name: gate-swing-left;
+}
+.gate-leaf-right {
+  transform-origin: 100% 50%;
+  animation-name: gate-swing-right;
+}
+@keyframes gate-swing-left {
+  0% {
+    transform: rotateY(0deg);
+  }
+  70% {
+    transform: rotateY(-112deg);
+  }
+  85% {
+    transform: rotateY(-98deg);
+  }
+  100% {
+    transform: rotateY(-106deg);
+  }
+}
+@keyframes gate-swing-right {
+  0% {
+    transform: rotateY(0deg);
+  }
+  70% {
+    transform: rotateY(112deg);
+  }
+  85% {
+    transform: rotateY(98deg);
+  }
+  100% {
+    transform: rotateY(106deg);
+  }
+}
+
+.gate-cloud-a {
+  animation: gate-drift 26s ease-in-out infinite alternate;
+}
+.gate-cloud-b {
+  animation: gate-drift 34s ease-in-out -8s infinite alternate-reverse;
+}
+@keyframes gate-drift {
+  from {
+    transform: translateX(-26px);
+  }
+  to {
+    transform: translateX(34px);
+  }
+}
+
+.gate-sun circle:first-child {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: gate-sun-pulse 5s ease-in-out infinite;
+}
+@keyframes gate-sun-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.5;
+  }
+}
+
+.gate-lamp {
+  animation: gate-lamp-glow 3.2s ease-in-out infinite;
+}
+@keyframes gate-lamp-glow {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-leaf,
+  .gate-cloud-a,
+  .gate-cloud-b,
+  .gate-sun circle,
+  .gate-lamp {
+    animation: none;
+  }
+  /* Without motion the gate is simply open — the landing copy still reads. */
+  .gate-leaf-left {
+    transform: rotateY(-106deg);
+  }
+  .gate-leaf-right {
+    transform: rotateY(106deg);
+  }
+}
+
+/* Loading spinners must still spin for users who reduce decorative motion —
+   spin communicates a live process, it is functional feedback, not decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* Thin, quiet scrollbars inside scrollable panels. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: theme('colors.slate.300') transparent;
 }
