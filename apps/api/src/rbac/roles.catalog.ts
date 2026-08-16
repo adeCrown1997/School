@@ -77,6 +77,20 @@ export const ROLE_DEFS: RoleDef[] = [
       P.REGISTRATION_VIEW,
       P.REGISTRATION_MANAGE,
       P.REGISTRATION_LOCK,
+      // Results: oversight only — view in-scope batches and co-sign the
+      // dual-control publication. Approve is the academic chain's; score entry
+      // belongs to the allocated lecturer (§10).
+      P.RESULTS_VIEW,
+      P.RESULTS_PUBLISH,
+      // Finance oversight: dashboards reconcile expected vs received, so the
+      // administrator reads the ledger — but never posts or waives (that is the
+      // bursary's ledger authority).
+      P.FINANCE_VIEW,
+      P.FINANCE_RECONCILE,
+      P.EXAMS_VIEW,
+      P.CLEARANCE_VIEW,
+      P.GRADUATION_VIEW,
+      P.TRANSCRIPTS_VIEW,
       P.STUDENTS_VIEW,
       P.AUDIT_VIEW,
       P.DASHBOARD_ADMIN_VIEW,
@@ -105,6 +119,25 @@ export const ROLE_DEFS: RoleDef[] = [
       P.REGISTRATION_VIEW,
       P.REGISTRATION_LOCK,
       P.REGISTRATION_EXCEPTION_REVIEW,
+      // Results administration: registry places/releases withholdings (§10.7),
+      // co-signs publication, and sees the pipeline. It never enters or approves
+      // marks — that stays with the academic chain.
+      P.RESULTS_VIEW,
+      P.RESULTS_WITHHOLD,
+      P.RESULTS_PUBLISH,
+      // Clearance & graduation: registry runs the evaluation, records Senate
+      // approval, and finalises the two lists (§14). Senate APPROVAL is a
+      // separate key from evaluation precisely so the same office cannot both
+      // run the numbers and ratify them unseen.
+      P.CLEARANCE_VIEW,
+      P.CLEARANCE_SIGN,
+      P.CLEARANCE_WAIVE,
+      P.GRADUATION_VIEW,
+      P.GRADUATION_EVALUATE,
+      P.GRADUATION_APPROVE,
+      // Credentials: transcript requests are reviewed and dispatched here.
+      P.TRANSCRIPTS_VIEW,
+      P.TRANSCRIPTS_REVIEW,
       P.AUDIT_VIEW,
       P.DASHBOARD_ADMIN_VIEW,
     ],
@@ -133,6 +166,10 @@ export const ROLE_DEFS: RoleDef[] = [
       ...ACADEMIC_READONLY,
       P.DASHBOARD_ADMIN_VIEW,
       P.REGISTRATION_VIEW,
+      // Faculty collation tier of the result chain (§10.4): view and act at an
+      // approval stage in scope.
+      P.RESULTS_VIEW,
+      P.RESULTS_APPROVE,
     ],
   },
   {
@@ -157,6 +194,13 @@ export const ROLE_DEFS: RoleDef[] = [
       // above, so an HOD approves only their own department's students.
       P.REGISTRATION_VIEW,
       P.REGISTRATION_APPROVE,
+      // §10.1/§10.4: the HOD OWNS the assessment structure (weightings), and is
+      // the departmental stage of the result approval chain. Score ENTRY is not
+      // here — the HOD approves what allocated LECTURERS enter, and holding both
+      // would collapse the separation of duties (§5.4).
+      P.RESULTS_VIEW,
+      P.RESULTS_ASSESS_MANAGE,
+      P.RESULTS_APPROVE,
       P.DASHBOARD_ADMIN_VIEW,
     ],
   },
@@ -176,20 +220,96 @@ export const ROLE_DEFS: RoleDef[] = [
     ],
   },
   {
+    key: 'DEAN',
+    name: 'Dean',
+    description:
+      'Faculty board approvals: the faculty stage of the result approval chain and oversight of registrations in scope.',
+    scopeKind: ScopeType.FACULTY,
+    // The Dean is the FACULTY stage of the result chain (§10.4) and ratifies at
+    // departmental scope beneath them. No score entry, no publishing — the
+    // chain must have at least three distinct hands.
+    permissions: [
+      ...STUDENT_READONLY,
+      ...ACADEMIC_READONLY,
+      P.REGISTRATION_VIEW,
+      P.REGISTRATION_APPROVE,
+      P.RESULTS_VIEW,
+      P.RESULTS_APPROVE,
+      P.DASHBOARD_ADMIN_VIEW,
+    ],
+  },
+  {
+    key: 'EXAM_OFFICER',
+    name: 'Exam Officer',
+    description:
+      'Examinations: schedules and venues, eligibility gating, exam-card issuance and hall attendance.',
+    scopeKind: ScopeType.FACULTY,
+    // Exam officers run the §12 machinery but can never WRITE RESULTS: the
+    // examination module raises an assessment amendment instead of editing a
+    // grade (§12.5). RESULTS_VIEW is read-only context.
+    permissions: [
+      ...STUDENT_READONLY,
+      ...ACADEMIC_READONLY,
+      P.REGISTRATION_VIEW,
+      P.RESULTS_VIEW,
+      P.RESULTS_WITHHOLD,
+      P.EXAMS_VIEW,
+      P.EXAMS_MANAGE,
+      P.EXAMS_CARD_ISSUE,
+      P.DASHBOARD_ADMIN_VIEW,
+    ],
+  },
+  {
     key: 'LECTURER',
     name: 'Lecturer',
     description:
-      'Teaching staff. Read-only structure and course catalogue; academic modules arrive later.',
+      'Teaching staff. Views the academic structure, and enters/submits raw scores for allocated offerings (scope-aware).',
     scopeKind: ScopeType.DEPARTMENT,
-    permissions: [P.STRUCTURE_VIEW, ...ACADEMIC_READONLY],
+    // The lecturer's ONLY result authority is score entry on their offerings
+    // (§10.2): they see their own sheet, submit it, then stop. They cannot
+    // define weightings (INV-11), approve, publish or withhold — each of those
+    // is a different hand in the same chain.
+    permissions: [P.STRUCTURE_VIEW, ...ACADEMIC_READONLY, P.RESULTS_SCORE_MANAGE],
+  },
+  {
+    key: 'LIBRARY_OFFICER',
+    name: 'Library Officer',
+    description: 'Signs the LIBRARY step of student clearance (loans returned, fines cleared).',
+    scopeKind: ScopeType.GLOBAL,
+    permissions: [...STUDENT_READONLY, P.CLEARANCE_VIEW, P.CLEARANCE_SIGN],
+  },
+  {
+    key: 'STUDENT_AFFAIRS',
+    name: 'Student Affairs Officer',
+    description:
+      'Signs the STUDENT_AFFAIRS and HOSTEL clearance steps; views holds and disciplinary context.',
+    scopeKind: ScopeType.GLOBAL,
+    permissions: [...STUDENT_READONLY, P.CLEARANCE_VIEW, P.CLEARANCE_SIGN],
   },
   {
     key: 'BURSARY_OFFICER',
     name: 'Bursary Officer',
     description:
-      'Finance staff. Phase 1: read-only student directory; finance modules arrive later.',
+      'Finance staff: fee schedules, invoicing, payment posting, waivers, loan clearances and reconciliation.',
     scopeKind: ScopeType.GLOBAL,
-    permissions: [...STUDENT_READONLY],
+    // Finance authority lives entirely here (docs/03 §11). Note the SOD shape:
+    // WAIVER approval needs a SECOND signature (the service checks the
+    // approver differs from the requester), and payment REVERSAL is a new
+    // ledger entry, never an edit — so no combination of these keys can
+    // silently move money.
+    permissions: [
+      ...STUDENT_READONLY,
+      P.FINANCE_VIEW,
+      P.FINANCE_SCHEDULE_MANAGE,
+      P.FINANCE_INVOICE_MANAGE,
+      P.FINANCE_PAYMENT_MANAGE,
+      P.FINANCE_WAIVER_MANAGE,
+      P.FINANCE_RECONCILE,
+      // The bursary signs the BURSARY step of student clearance.
+      P.CLEARANCE_VIEW,
+      P.CLEARANCE_SIGN,
+      P.DASHBOARD_ADMIN_VIEW,
+    ],
   },
   {
     key: 'STUDENT',

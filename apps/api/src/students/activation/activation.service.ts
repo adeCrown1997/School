@@ -74,10 +74,7 @@ export class ActivationService {
     this.otpTtlMin = this.config.get<number>('OTP_TTL_MINUTES', 10);
     this.continuationTtlMin = this.config.get<number>('ACTIVATION_TOKEN_TTL_MINUTES', 30);
     this.maxAttempts = this.config.get<number>('MAX_ACTIVATION_ATTEMPTS', 5);
-    this.requireEmailOtp = this.config.get<boolean>(
-      'STUDENT_ACTIVATION_REQUIRE_EMAIL_OTP',
-      false,
-    );
+    this.requireEmailOtp = this.config.get<boolean>('STUDENT_ACTIVATION_REQUIRE_EMAIL_OTP', false);
   }
 
   /**
@@ -241,10 +238,7 @@ export class ActivationService {
    * Reuses the same lockout counters as `identify`, so guessing a DOB against a
    * known matric number is throttled identically on both paths.
    */
-  private async activateWithoutEmailVerification(
-    dto: ActivationIdentifyDto,
-    ctx: RequestContext,
-  ) {
+  private async activateWithoutEmailVerification(dto: ActivationIdentifyDto, ctx: RequestContext) {
     const matric = dto.matriculationNumber.trim();
     const record = await this.prisma.studentRecord.findFirst({
       where: { matriculationNumber: { equals: matric, mode: 'insensitive' } },
@@ -275,7 +269,11 @@ export class ActivationService {
       return ActivationService.GENERIC_ACTIVATE;
     }
 
-    if (!this.factorsMatch(record, dto) || record.activationState !== 'PENDING' || record.userAccount) {
+    if (
+      !this.factorsMatch(record, dto) ||
+      record.activationState !== 'PENDING' ||
+      record.userAccount
+    ) {
       await this.registerFailedIdentify(record.id, matric, ctx, {
         reason: !this.factorsMatch(record, dto)
           ? 'factor_mismatch'
@@ -304,7 +302,10 @@ export class ActivationService {
       activation.id,
       record.surname,
       ctx,
-      { mustChangePassword: true, action: 'student.activation.completed_without_email_verification' },
+      {
+        mustChangePassword: true,
+        action: 'student.activation.completed_without_email_verification',
+      },
     );
 
     return ActivationService.GENERIC_ACTIVATE;

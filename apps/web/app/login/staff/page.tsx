@@ -13,10 +13,12 @@ import { SignInForm } from '@/components/sign-in-form';
 
 export default function StaffLoginPage() {
   return (
-    <main className="grid min-h-screen place-items-center px-4">
-      <div className="w-full max-w-md">
+    <main className="auth-bg grid min-h-screen place-items-center px-4">
+      <div className="w-full max-w-md animate-fade-up">
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-brand-700">Staff sign-in</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+            Staff sign-in
+          </h1>
           <p className="mt-1 text-sm text-slate-500">Use your work email address</p>
         </div>
 

@@ -374,6 +374,77 @@ async function seedRegistrationApprovalChain(): Promise<void> {
   }
 }
 
+/**
+ * The RESULT approval chain (docs/03 §10.4).
+ *
+ * Same posture as the registration chain: an N-stage pipeline where the stages
+ * are DATA, each bound to a role that must hold it at a scope containing the
+ * offering's department. Shipping HOD → Dean is the strict reading of §10.4's
+ * "at least three distinct hands" when the LECTURER is counted as the
+ * originator (submit ≠ approve): the lecturer enters and submits, the HOD signs
+ * the departmental stage, the Dean signs the faculty stage — and publication is
+ * a separate dual-control act nobody in this chain performs alone.
+ *
+ * Stages are created only when absent; a re-seed never re-opens a stage an
+ * institution deactivated (the same rule as the registration chain).
+ */
+async function seedResultApprovalChain(): Promise<void> {
+  const chain = [
+    {
+      sequence: 1,
+      key: 'HOD',
+      name: 'Head of Department',
+      roleKey: 'HOD',
+      // A result batch belongs to a department-owned offering, so the HOD must
+      // hold their assignment at (or above) the offering's department.
+      scopeKind: ScopeType.DEPARTMENT,
+    },
+    {
+      sequence: 2,
+      key: 'DEAN',
+      name: 'Dean',
+      roleKey: 'DEAN',
+      scopeKind: ScopeType.FACULTY,
+    },
+  ] as const;
+
+  for (const stage of chain) {
+    const role = await prisma.role.findUnique({
+      where: { key: stage.roleKey },
+      select: { id: true },
+    });
+    if (!role) throw new Error(`${stage.roleKey} role missing — seed roles first.`);
+
+    const existing = await prisma.approvalStage.findUnique({
+      where: { domain_key: { domain: ApprovalDomain.RESULT, key: stage.key } },
+      select: { id: true, sequence: true, isActive: true },
+    });
+    if (existing) {
+      await prisma.approvalStage.update({
+        where: { id: existing.id },
+        data: { name: stage.name, requiredRoleId: role.id },
+      });
+      console.log(
+        `  result stage ${stage.key}: kept (sequence ${existing.sequence}, ${
+          existing.isActive ? 'active' : 'inactive'
+        })`,
+      );
+      continue;
+    }
+    await prisma.approvalStage.create({
+      data: {
+        domain: ApprovalDomain.RESULT,
+        sequence: stage.sequence,
+        key: stage.key,
+        name: stage.name,
+        requiredRoleId: role.id,
+        scopeKind: stage.scopeKind,
+      },
+    });
+    console.log(`  result stage ${stage.key}: created at sequence ${stage.sequence}`);
+  }
+}
+
 /** Create the single bootstrap SUPER_ADMIN from env, forced to rotate on login. */
 async function seedBootstrapAdmin(): Promise<void> {
   const email = process.env.BOOTSTRAP_ADMIN_EMAIL;
@@ -941,6 +1012,7 @@ async function main(): Promise<void> {
   await seedGradeScale();
   await seedCreditPolicy();
   await seedRegistrationApprovalChain();
+  await seedResultApprovalChain();
   await seedBootstrapAdmin();
 
   if (seedDemo()) {

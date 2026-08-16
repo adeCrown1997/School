@@ -67,10 +67,12 @@ export default function ActivatePage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center px-4 py-10">
-      <div className="w-full max-w-md">
+    <main className="auth-bg grid min-h-screen place-items-center px-4 py-10">
+      <div className="w-full max-w-md animate-fade-up">
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-brand-700">Activate your student account</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+            Activate your student account
+          </h1>
           <p className="mt-1 text-sm text-slate-500">
             Use the details from your admission record. The university has already created your
             record — this only sets up your login.

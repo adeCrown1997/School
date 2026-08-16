@@ -16,6 +16,7 @@ import type { StudentRecord, Faculty, AcademicSession } from '@/lib/types';
 import { PageHeader, AccessNotice, EmptyState } from '@/components/page';
 import { Alert, Spinner, StatusBadge } from '@/components/ui';
 import { Pagination, type PageMeta } from '@/components/pagination';
+import { PlusIcon, SearchIcon, UploadIcon } from '@/components/icons';
 
 interface Filters {
   search: string;
@@ -97,12 +98,12 @@ export default function StudentsListPage() {
           <>
             {canImport ? (
               <Link href="/students/import" className="btn-secondary">
-                Bulk import
+                <UploadIcon size={16} className="text-slate-400" /> Bulk import
               </Link>
             ) : null}
             {canCreate ? (
               <Link href="/students/new" className="btn-primary">
-                New student
+                <PlusIcon size={16} /> New student
               </Link>
             ) : null}
           </>
@@ -110,23 +111,30 @@ export default function StudentsListPage() {
       />
 
       <form
-        className="card mb-4 grid grid-cols-1 gap-3 p-4 md:grid-cols-4"
+        className="card mb-5 grid grid-cols-1 items-end gap-3 p-5 md:grid-cols-[2fr_1fr_1fr_auto]"
         onSubmit={(e) => {
           e.preventDefault();
           setFilters((f) => ({ ...f, search: searchInput.trim(), page: 1 }));
         }}
       >
-        <div className="md:col-span-2">
+        <div>
           <label htmlFor="search" className="label">
             Search
           </label>
-          <input
-            id="search"
-            className="input"
-            placeholder="Name or matriculation number"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
+          <div className="relative">
+            <SearchIcon
+              size={16}
+              aria-hidden
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+            />
+            <input
+              id="search"
+              className="input pl-9"
+              placeholder="Name or matriculation number"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
         </div>
         <div>
           <label htmlFor="faculty" className="label">
@@ -164,11 +172,9 @@ export default function StudentsListPage() {
             <option value="LOCKED">Locked</option>
           </select>
         </div>
-        <div className="md:col-span-4">
-          <button type="submit" className="btn-secondary">
-            Apply
-          </button>
-        </div>
+        <button type="submit" className="btn-secondary justify-self-start md:justify-self-auto">
+          <SearchIcon size={16} className="text-slate-400" /> Apply
+        </button>
       </form>
 
       {error ? (
@@ -184,41 +190,48 @@ export default function StudentsListPage() {
       ) : rows.length === 0 ? (
         <EmptyState title="No students found">Try adjusting your search or filters.</EmptyState>
       ) : (
-        <div className="card overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-slate-500">
-                <th className="px-4 py-3 font-medium">Matric no.</th>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Programme</th>
-                <th className="px-4 py-3 font-medium">Level</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Account</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((s) => (
-                <tr key={s.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800">{s.matriculationNumber}</td>
-                  <td className="px-4 py-3 text-slate-700">
-                    {[s.surname, s.firstName, s.otherNames].filter(Boolean).join(' ')}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{s.programme?.name ?? '—'}</td>
-                  <td className="px-4 py-3 tabular-nums text-slate-600">{s.currentLevel}</td>
-                  <td className="px-4 py-3 text-slate-600">{s.studentStatus?.label ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <StatusBadge state={s.activationState} />
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link href={`/students/${s.id}`} className="text-brand-700 hover:underline">
-                      View
-                    </Link>
-                  </td>
+        <div className="card animate-fade-up overflow-hidden">
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Matric no.</th>
+                  <th>Name</th>
+                  <th>Programme</th>
+                  <th>Level</th>
+                  <th>Status</th>
+                  <th>Account</th>
+                  <th aria-label="Actions" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((s) => (
+                  <tr key={s.id}>
+                    <td className="font-semibold tabular-nums text-slate-900">
+                      {s.matriculationNumber}
+                    </td>
+                    <td className="text-slate-700">
+                      {[s.surname, s.firstName, s.otherNames].filter(Boolean).join(' ')}
+                    </td>
+                    <td className="text-slate-600">{s.programme?.name ?? '—'}</td>
+                    <td className="tabular-nums text-slate-600">{s.currentLevel}</td>
+                    <td className="text-slate-600">{s.studentStatus?.label ?? '—'}</td>
+                    <td>
+                      <StatusBadge state={s.activationState} />
+                    </td>
+                    <td className="text-right">
+                      <Link
+                        href={`/students/${s.id}`}
+                        className="font-semibold text-brand-700 hover:underline"
+                      >
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
