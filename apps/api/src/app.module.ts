@@ -13,6 +13,7 @@ import { StructureModule } from './structure/structure.module';
 import { StudentsModule } from './students/students.module';
 import { AcademicsModule } from './academics/academics.module';
 import { RegistrationModule } from './registration/registration.module';
+import { ResultsModule } from './results/results.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
 import { HealthController } from './common/health.controller';
 
@@ -59,6 +60,7 @@ import { HealthController } from './common/health.controller';
     StudentsModule,
     AcademicsModule,
     RegistrationModule,
+    ResultsModule,
     DashboardsModule,
   ],
   controllers: [HealthController],

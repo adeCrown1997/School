@@ -98,7 +98,9 @@ describe('AcademicConfigService grade-band validation', () => {
   });
 
   it('rejects a band whose minimum is above its maximum', async () => {
-    const bands = VALID_BANDS.map((b) => (b.grade === 'C' ? { ...b, minScore: 59, maxScore: 50 } : b));
+    const bands = VALID_BANDS.map((b) =>
+      b.grade === 'C' ? { ...b, minScore: 59, maxScore: 50 } : b,
+    );
     await expect(createWith(bands)).rejects.toThrow(/is above its maximum/i);
   });
 
@@ -120,7 +122,11 @@ describe('AcademicConfigService grade-band validation', () => {
       },
     });
     await service.createScale(
-      { key: 'k', name: 'N', bands: VALID_BANDS.map((b) => ({ ...b, grade: b.grade.toLowerCase() })) },
+      {
+        key: 'k',
+        name: 'N',
+        bands: VALID_BANDS.map((b) => ({ ...b, grade: b.grade.toLowerCase() })),
+      },
       actor,
     );
     const written = (prisma as unknown as { gradeBand: { createMany: jest.Mock } }).gradeBand
@@ -134,9 +140,12 @@ describe('AcademicConfigService.replaceBands (supersede, do not overwrite)', () 
     const { service } = build({
       prisma: {
         gradeScale: {
-          findUnique: jest
-            .fn()
-            .mockResolvedValue({ id: 'gs1', key: 'FIVE_POINT', bands: [], _count: { gradeRecords: 42 } }),
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'gs1',
+            key: 'FIVE_POINT',
+            bands: [],
+            _count: { gradeRecords: 42 },
+          }),
         },
       },
     });
@@ -165,7 +174,9 @@ describe('AcademicConfigService.setDefaultScale', () => {
     const { service } = build({
       prisma: {
         gradeScale: {
-          findUnique: jest.fn().mockResolvedValue({ id: 'gs1', isActive: true, isDefault: false, bands: [] }),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ id: 'gs1', isActive: true, isDefault: false, bands: [] }),
         },
       },
     });
@@ -176,9 +187,12 @@ describe('AcademicConfigService.setDefaultScale', () => {
     const { service } = build({
       prisma: {
         gradeScale: {
-          findUnique: jest
-            .fn()
-            .mockResolvedValue({ id: 'gs1', isActive: false, isDefault: false, bands: [{ id: 'b1' }] }),
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'gs1',
+            isActive: false,
+            isDefault: false,
+            bands: [{ id: 'b1' }],
+          }),
         },
       },
     });
@@ -189,9 +203,13 @@ describe('AcademicConfigService.setDefaultScale', () => {
     const { service, prisma } = build({
       prisma: {
         gradeScale: {
-          findUnique: jest
-            .fn()
-            .mockResolvedValue({ id: 'gs2', key: 'FOUR', isActive: true, isDefault: false, bands: [{ id: 'b1' }] }),
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'gs2',
+            key: 'FOUR',
+            isActive: true,
+            isDefault: false,
+            bands: [{ id: 'b1' }],
+          }),
           updateMany: jest.fn(),
           update: jest.fn(),
         },
@@ -211,7 +229,9 @@ describe('AcademicConfigService.updateCategory', () => {
     const { service } = build({
       prisma: {
         courseCategory: {
-          findUnique: jest.fn().mockResolvedValue({ id: 'c1', key: 'CORE', _count: { courses: 12 } }),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ id: 'c1', key: 'CORE', _count: { courses: 12 } }),
           update: jest.fn(),
         },
       },
@@ -225,8 +245,12 @@ describe('AcademicConfigService.updateCategory', () => {
     const { service } = build({
       prisma: {
         courseCategory: {
-          findUnique: jest.fn().mockResolvedValue({ id: 'c1', key: 'SIWES', _count: { courses: 0 } }),
-          update: jest.fn().mockResolvedValue({ id: 'c1', label: 'x', sortOrder: 0, isActive: false }),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ id: 'c1', key: 'SIWES', _count: { courses: 0 } }),
+          update: jest
+            .fn()
+            .mockResolvedValue({ id: 'c1', label: 'x', sortOrder: 0, isActive: false }),
         },
       },
     });
@@ -261,14 +285,18 @@ describe('AcademicConfigService credit policy', () => {
   });
 
   it('falls back when the stored minimum exceeds the maximum', async () => {
-    await expect(withConfigValue({ minUnits: 30, maxUnits: 24 }).getCreditPolicy()).resolves.toEqual({
+    await expect(
+      withConfigValue({ minUnits: 30, maxUnits: 24 }).getCreditPolicy(),
+    ).resolves.toEqual({
       ...DEFAULT_CREDIT_POLICY,
       isDefault: true,
     });
   });
 
   it('returns a well-formed stored policy as configured', async () => {
-    await expect(withConfigValue({ minUnits: 12, maxUnits: 30 }).getCreditPolicy()).resolves.toEqual({
+    await expect(
+      withConfigValue({ minUnits: 12, maxUnits: 30 }).getCreditPolicy(),
+    ).resolves.toEqual({
       minUnits: 12,
       maxUnits: 30,
       isDefault: false,

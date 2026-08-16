@@ -21,3 +21,11 @@ export interface CreditPolicy {
 /** Fallback used when no policy row exists yet, so registration has a defined
  *  rule on a fresh install rather than silently allowing anything. */
 export const DEFAULT_CREDIT_POLICY: CreditPolicy = { minUnits: 15, maxUnits: 24 };
+
+/** SystemConfig key recording how repeated (retaken) courses count toward the
+ *  CGPA. Value shape: { policy: 'DILUTION' | 'BEST_GRADE' } (docs/03 §10.5,
+ *  Q-02). There is deliberately NO default: publishing a repeat without an
+ *  explicit choice would silently misclassify degrees. */
+export const CGPA_REPEAT_POLICY_KEY = 'academic.cgpa_repeat_policy';
+
+export type CgpaRepeatPolicy = 'DILUTION' | 'BEST_GRADE';

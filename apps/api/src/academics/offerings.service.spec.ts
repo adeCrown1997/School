@@ -161,10 +161,7 @@ describe('OfferingsService.create', () => {
   it('refuses to mount a course on another department timetable', async () => {
     const { service } = build({ prisma: base() });
     await expect(
-      service.create(
-        { courseId: 'crs1', sessionId: 'ses1', semesterId: 'sem1' },
-        hod('dep-mth'),
-      ),
+      service.create({ courseId: 'crs1', sessionId: 'ses1', semesterId: 'sem1' }, hod('dep-mth')),
     ).rejects.toThrow(ForbiddenException);
   });
 });
@@ -283,7 +280,11 @@ describe('OfferingsService.generateFromCurriculum', () => {
       { courseId: 'c1', semesterSequence: 1, course: { id: 'c1', code: 'CSC101', isActive: true } },
       { courseId: 'c2', semesterSequence: 1, course: { id: 'c2', code: 'CSC103', isActive: true } },
       { courseId: 'c3', semesterSequence: 2, course: { id: 'c3', code: 'CSC102', isActive: true } },
-      { courseId: 'c4', semesterSequence: 1, course: { id: 'c4', code: 'OLD101', isActive: false } },
+      {
+        courseId: 'c4',
+        semesterSequence: 1,
+        course: { id: 'c4', code: 'OLD101', isActive: false },
+      },
     ],
     ...over,
   });
@@ -345,9 +346,9 @@ describe('OfferingsService.generateFromCurriculum', () => {
 
 describe('OfferingsService derived availability', () => {
   const listWith = (rows: Array<Record<string, unknown>>) =>
-    build({ prisma: { courseOffering: { findMany: jest.fn().mockResolvedValue(rows) } } }).service.list(
-      {},
-    );
+    build({
+      prisma: { courseOffering: { findMany: jest.fn().mockResolvedValue(rows) } },
+    }).service.list({});
 
   it('derives seats remaining and fullness from capacity and seatsTaken', async () => {
     const [row] = await listWith([{ capacity: 100, seatsTaken: 40 }]);

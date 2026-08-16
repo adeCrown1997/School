@@ -55,6 +55,50 @@ export const PERMISSIONS = {
   REGISTRATION_LOCK: 'registration.lock', // freeze an approved registration
   REGISTRATION_EXCEPTION_REVIEW: 'registration.exception.review',
 
+  // Results (Phase 3). Six keys because the result pipeline is THREE separation-
+  // of-duties boundaries: whoever defines the assessment structure, whoever
+  // enters scores, whoever approves, and whoever publishes must be expressible
+  // independently — a lecturer who can also approve and publish their own marks
+  // is a one-person examination board (docs/03 §10).
+  RESULTS_VIEW: 'results.view',
+  RESULTS_ASSESS_MANAGE: 'results.assess.manage', // assessment components (HOD-owned, §10.1)
+  RESULTS_SCORE_MANAGE: 'results.score.manage', // enter/submit raw scores
+  RESULTS_APPROVE: 'results.approve', // act at a result approval stage
+  RESULTS_PUBLISH: 'results.publish', // dual-control publication
+  RESULTS_WITHHOLD: 'results.withhold', // place/lift result withholdings
+
+  // Finance (Phase 4). The split mirrors the SOD pairs of docs/02 §5.4: the
+  // officer who RAISES an invoice is not the one who WAIVES it, and clearing a
+  // waiver requires a second signature — none of which is expressible with a
+  // single finance.manage key.
+  FINANCE_VIEW: 'finance.view',
+  FINANCE_SCHEDULE_MANAGE: 'finance.schedule.manage', // fee schedules & items
+  FINANCE_INVOICE_MANAGE: 'finance.invoice.manage', // generate/issue/cancel invoices
+  FINANCE_PAYMENT_MANAGE: 'finance.payment.manage', // post payments/reversals to the ledger
+  FINANCE_WAIVER_MANAGE: 'finance.waiver.manage', // request/approve waivers & loan clearances
+  FINANCE_RECONCILE: 'finance.reconcile', // settlement reconciliation reports
+
+  // Examinations (Phase 5). Card issuance is a separate key from general
+  // management: the hall admits on the strength of a card, so who may mint one
+  // must be its own grant (docs/03 §12).
+  EXAMS_VIEW: 'exams.view',
+  EXAMS_MANAGE: 'exams.manage', // periods, venues, schedules, attendance
+  EXAMS_CARD_ISSUE: 'exams.card.issue', // issue/invalidate exam cards
+
+  // Clearance & graduation (Phase 6). Sign and waive are distinct keys because
+  // waiving a mandatory unit is the exceptional power — the clearance step that
+  // would otherwise keep a student off the list (docs/03 §14.1).
+  CLEARANCE_VIEW: 'clearance.view',
+  CLEARANCE_SIGN: 'clearance.sign',
+  CLEARANCE_WAIVE: 'clearance.waive',
+  GRADUATION_VIEW: 'graduation.view',
+  GRADUATION_EVALUATE: 'graduation.evaluate', // run candidate evaluations
+  GRADUATION_APPROVE: 'graduation.approve', // record Senate approvals
+
+  // Credentials (Phase 7)
+  TRANSCRIPTS_VIEW: 'transcripts.view',
+  TRANSCRIPTS_REVIEW: 'transcripts.review', // review/approve/dispatch requests
+
   // Student master records
   STUDENTS_VIEW: 'students.view',
   STUDENTS_CREATE: 'students.create',
@@ -207,6 +251,126 @@ export const PERMISSION_DEFS: PermissionDef[] = [
     key: PERMISSIONS.REGISTRATION_EXCEPTION_REVIEW,
     category: 'registration',
     description: 'Approve/reject registration exceptions (overrides, late registration)',
+  },
+
+  {
+    key: PERMISSIONS.RESULTS_VIEW,
+    category: 'results',
+    description: 'View course results, assessments and result batches in scope',
+  },
+  {
+    key: PERMISSIONS.RESULTS_ASSESS_MANAGE,
+    category: 'results',
+    description: 'Define and update the assessment structure of an offering (weightings)',
+  },
+  {
+    key: PERMISSIONS.RESULTS_SCORE_MANAGE,
+    category: 'results',
+    description: 'Enter, autosave and submit raw scores for an offering',
+  },
+  {
+    key: PERMISSIONS.RESULTS_APPROVE,
+    category: 'results',
+    description: 'Approve/reject a result batch at an approval stage',
+  },
+  {
+    key: PERMISSIONS.RESULTS_PUBLISH,
+    category: 'results',
+    description: 'Co-sign the dual-control publication of a ratified result batch',
+  },
+  {
+    key: PERMISSIONS.RESULTS_WITHHOLD,
+    category: 'results',
+    description: 'Place or lift a withholding on a result',
+  },
+
+  {
+    key: PERMISSIONS.FINANCE_VIEW,
+    category: 'finance',
+    description: 'View fee schedules, invoices, payments, waivers and ledger activity',
+  },
+  {
+    key: PERMISSIONS.FINANCE_SCHEDULE_MANAGE,
+    category: 'finance',
+    description: 'Create and edit fee schedules and their fee items',
+  },
+  {
+    key: PERMISSIONS.FINANCE_INVOICE_MANAGE,
+    category: 'finance',
+    description: 'Generate, issue and cancel student invoices',
+  },
+  {
+    key: PERMISSIONS.FINANCE_PAYMENT_MANAGE,
+    category: 'finance',
+    description: 'Post payments and reversals to the ledger',
+  },
+  {
+    key: PERMISSIONS.FINANCE_WAIVER_MANAGE,
+    category: 'finance',
+    description: 'Request and approve fee waivers and loan clearances',
+  },
+  {
+    key: PERMISSIONS.FINANCE_RECONCILE,
+    category: 'finance',
+    description: 'Reconcile provider settlement reports against the ledger',
+  },
+
+  {
+    key: PERMISSIONS.EXAMS_VIEW,
+    category: 'exams',
+    description: 'View exam periods, schedules, venues, eligibility and cards in scope',
+  },
+  {
+    key: PERMISSIONS.EXAMS_MANAGE,
+    category: 'exams',
+    description: 'Manage exam periods, venues, schedules and hall attendance',
+  },
+  {
+    key: PERMISSIONS.EXAMS_CARD_ISSUE,
+    category: 'exams',
+    description: 'Issue and invalidate student examination cards',
+  },
+
+  {
+    key: PERMISSIONS.CLEARANCE_VIEW,
+    category: 'clearance',
+    description: 'View clearance units, requests and steps',
+  },
+  {
+    key: PERMISSIONS.CLEARANCE_SIGN,
+    category: 'clearance',
+    description: 'Sign a clearance step for a unit (clear/block)',
+  },
+  {
+    key: PERMISSIONS.CLEARANCE_WAIVE,
+    category: 'clearance',
+    description: 'Waive a mandatory clearance step (requires a distinct authoriser)',
+  },
+  {
+    key: PERMISSIONS.GRADUATION_VIEW,
+    category: 'graduation',
+    description: 'View graduation candidates, Senate approvals and graduation lists',
+  },
+  {
+    key: PERMISSIONS.GRADUATION_EVALUATE,
+    category: 'graduation',
+    description: 'Run graduation evaluations for students in scope',
+  },
+  {
+    key: PERMISSIONS.GRADUATION_APPROVE,
+    category: 'graduation',
+    description: 'Record Senate approvals and finalise graduation lists',
+  },
+
+  {
+    key: PERMISSIONS.TRANSCRIPTS_VIEW,
+    category: 'transcripts',
+    description: 'View transcript and document requests in scope',
+  },
+  {
+    key: PERMISSIONS.TRANSCRIPTS_REVIEW,
+    category: 'transcripts',
+    description: 'Review, approve, generate and dispatch transcript requests',
   },
 
   {
