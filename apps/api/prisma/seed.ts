@@ -606,8 +606,59 @@ async function seedDemoStructure(): Promise<{ programmes: DemoProgramme[]; sessi
       }
     }
   }
-  console.log(`  demo structure: ${programmes.length} programme(s) under Demo University`);
-  return { programmes, sessionId: session.id };
+    console.log(`  demo structure: ${programmes.length} programme(s) under Demo University`);
+    return { programmes, sessionId: session.id };
+}
+
+/**
+ * Differential-fee categories (Q-36) and one demo fee schedule per programme.
+ * Only the STRUCTURE is seeded: no invoices are generated, so the registration
+ * fee-clearance gate remains honestly NOT_ENFORCED until bursary actually bills.
+ * Amounts are minor units (kobo) — ₦1,000 = 100000.
+ */
+async function seedDemoFinance(programmes: DemoProgramme[], sessionId: string): Promise<void> {
+  for (const cat of [
+    { key: 'INDIGENE', label: 'Indigene', description: 'Community scholarship rate' },
+    { key: 'NON_INDIGENE', label: 'Non-indigene', description: 'Standard rate' },
+    { key: 'INTERNATIONAL', label: 'International', description: 'International student rate' },
+  ]) {
+    await prisma.studentCategory.upsert({
+      where: { key: cat.key },
+      create: cat,
+      update: { label: cat.label, description: cat.description },
+    });
+  }
+
+  for (const p of programmes) {
+    const existing = await prisma.feeSchedule.findFirst({
+      where: { programmeId: p.id, sessionId },
+      select: { id: true },
+    });
+    if (existing) continue; // a re-run must never overwrite a live structure
+    await prisma.feeSchedule.create({
+      data: {
+        programmeId: p.id,
+        sessionId,
+        name: `${p.code} 2024/2025 session fees`,
+        clearanceThresholdBps: 10000,
+        items: {
+          create: [
+            { feeType: 'TUITION', label: 'Tuition fee', amount: 80_000_00n, sortOrder: 0 },
+            { feeType: 'DEVELOPMENT_LEVY', label: 'Development levy', amount: 15_000_00n, sortOrder: 1 },
+            { feeType: 'ICT_LEVY', label: 'ICT facility levy', amount: 10_000_00n, sortOrder: 2 },
+            {
+              feeType: 'FACULTY_DUE',
+              label: 'Faculty due',
+              amount: 5_000_00n,
+              sortOrder: 3,
+              isMandatory: true,
+            },
+          ],
+        },
+      },
+    });
+  }
+  console.log(`  demo finance: ${programmes.length} fee schedule(s), 3 student categor(ies)`);
 }
 
 /**
@@ -1020,6 +1071,7 @@ async function main(): Promise<void> {
     const { programmes, sessionId } = await seedDemoStructure();
     await seedDemoStudents(programmes, sessionId, activeStatusId);
     await seedDemoAcademics(programmes, sessionId);
+    await seedDemoFinance(programmes, sessionId);
   } else {
     console.log('- demo: SKIPPED (production or SEED_DEMO=false)');
   }

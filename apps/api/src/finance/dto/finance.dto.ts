@@ -7,6 +7,7 @@ import {
   IsString,
   IsUUID,
   Length,
+  Matches,
   Max,
   Min,
   Validate,
@@ -91,6 +92,14 @@ export class UpdateFeeScheduleDto {
   @IsOptional() @IsBoolean() isActive!: boolean;
 }
 
+/** Whole-set replacement of a schedule's fee items (frozen once invoiced). */
+export class ReplaceFeeItemsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FeeItemDto)
+  items!: FeeItemDto[];
+}
+
 // --- Invoicing ---------------------------------------------------------------
 
 export class GenerateInvoicesDto {
@@ -108,6 +117,11 @@ export class GenerateInvoicesDto {
 
 export class IssueInvoiceDto {
   @IsOptional() @IsString() dueAt?: string;
+}
+
+export class CancelInvoiceDto {
+  /** Cancellation is a consequential act — the reason rides the audit trail. */
+  @IsString() @Length(10, 500) reason!: string;
 }
 
 // --- Payments ----------------------------------------------------------------
@@ -156,6 +170,10 @@ export class DecideWaiverDto {
   @IsOptional() @IsString() @Length(0, 500) decisionNote?: string;
 }
 
+export class CancelWaiverDto {
+  @IsString() @Length(10, 500) reason!: string;
+}
+
 export class RecordLoanClearanceDto {
   @IsUUID() studentRecordId!: string;
   @IsUUID() sessionId!: string;
@@ -197,4 +215,25 @@ export class ListWaiversQueryDto {
   @IsIn(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'])
   status?: string;
   @IsOptional() @BooleanQuery() includeDecided?: boolean;
+}
+
+// --- Reconciliation (§11.5) ----------------------------------------------------
+
+/** Settlement amounts may be negative (ledger ahead of provider), so the
+ *  bound differs from the non-negative MinorAmount constraint. */
+const SETTLEMENT_AMOUNT = /^-?\d{1,13}$/;
+
+export class RecordReconciliationDto {
+  @IsString() @Length(2, 40) provider!: string;
+  /** ISO date (YYYY-MM-DD) of the provider settlement report. */
+  @IsString() @Length(8, 16) settlementDate!: string;
+  /** Provider's reported total for the day, minor units, digit string. */
+  @IsString() @Matches(SETTLEMENT_AMOUNT) providerTotal!: string;
+  @IsOptional() @IsString() @Length(0, 500) notes?: string;
+}
+
+export class ResolveReconciliationDto {
+  /** Mandatory explanation: a resolved discrepancy is a judgment that must be
+   *  readable years later, not a silent checkbox. */
+  @IsString() @Length(10, 500) notes!: string;
 }

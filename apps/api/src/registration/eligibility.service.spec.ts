@@ -1,5 +1,6 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { LedgerService } from '../finance/ledger.service';
 import { CalendarService } from './calendar.service';
 import { EligibilityReport, EligibilityService, GateResult } from './eligibility.service';
 
@@ -48,8 +49,8 @@ function build(
   over: {
     student?: Record<string, unknown> | null;
     session?: Record<string, unknown> | null;
-    invoices?: Array<Record<string, unknown>>;
-    waivers?: Array<Record<string, unknown>>;
+    /** The fee-clearance verdict to return; default = no invoice issued. */
+    clearance?: { invoiced?: boolean; cleared?: boolean; shortfall?: bigint };
     windowOpen?: boolean;
   } = {},
 ) {
@@ -64,8 +65,6 @@ function build(
         .fn()
         .mockResolvedValue(over.session === null ? null : (over.session ?? session())),
     },
-    invoice: { findMany: jest.fn().mockResolvedValue(over.invoices ?? []) },
-    waiver: { groupBy: jest.fn().mockResolvedValue(over.waivers ?? []) },
   } as unknown as PrismaService;
 
   const open = over.windowOpen !== false;
@@ -87,7 +86,20 @@ function build(
     ),
   } as unknown as CalendarService;
 
-  return { service: new EligibilityService(prisma, calendar), prisma, calendar };
+  // Gate 3's query lives in LedgerService (INV-16): registration asks one
+  // derived question instead of re-summing the tables itself.
+  const c = over.clearance ?? {};
+  const ledger = {
+    clearance: jest.fn().mockResolvedValue({
+      invoiced: c.invoiced ?? false,
+      cleared: c.cleared ?? false,
+      shortfall: c.shortfall ?? 0n,
+      billed: 0n,
+      covered: 0n,
+    }),
+  } as unknown as LedgerService;
+
+  return { service: new EligibilityService(prisma, calendar, ledger), prisma, calendar, ledger };
 }
 
 const gate = (report: EligibilityReport, key: string): GateResult =>
@@ -221,16 +233,14 @@ describe('EligibilityService.evaluate', () => {
     });
 
     it('passes a settled invoice', async () => {
-      const { service } = build({
-        invoices: [{ id: 'inv1', totalAmount: 50_000_00n, paidAmount: 50_000_00n }],
-      });
+      const { service } = build({ clearance: { invoiced: true, cleared: true } });
       const report = await service.evaluate('stu1', 'ses1', 'sem1');
       expect(gate(report, 'FEE_CLEARANCE').passed).toBe(true);
     });
 
     it('fails an outstanding balance and quotes it in naira', async () => {
       const { service } = build({
-        invoices: [{ id: 'inv1', totalAmount: 50_000_00n, paidAmount: 20_000_50n }],
+        clearance: { invoiced: true, cleared: false, shortfall: 29_999_50n },
       });
       const report = await service.evaluate('stu1', 'ses1', 'sem1');
       expect(gate(report, 'FEE_CLEARANCE').passed).toBe(false);
@@ -238,22 +248,21 @@ describe('EligibilityService.evaluate', () => {
       expect(report.eligible).toBe(false);
     });
 
-    /** §11.4/Q-39: clearance is a query, and an approved waiver clears it too. */
-    it('treats an approved waiver as covering the shortfall', async () => {
-      const { service } = build({
-        invoices: [{ id: 'inv1', totalAmount: 50_000_00n, paidAmount: 20_000_00n }],
-        waivers: [{ invoiceId: 'inv1', _sum: { amount: 30_000_00n } }],
-      });
+    /** §11.4/Q-39: clearance is a query into finance — waiver/loan coverage is
+     *  computed there, and the result rides back as `cleared`. */
+    it('passes when the derived verdict says waived/loan cover suffices', async () => {
+      const { service, ledger } = build({ clearance: { invoiced: true, cleared: true } });
       const report = await service.evaluate('stu1', 'ses1', 'sem1');
       expect(gate(report, 'FEE_CLEARANCE').passed).toBe(true);
+      expect(ledger.clearance).toHaveBeenCalledWith('stu1', 'ses1');
     });
 
-    it('ignores draft and cancelled invoices — a draft is not a demand for money', async () => {
-      const { service, prisma } = build();
-      await service.evaluate('stu1', 'ses1', 'sem1');
-      expect((prisma.invoice.findMany as jest.Mock).mock.calls[0][0].where.status).toEqual({
-        in: ['ISSUED', 'PARTIALLY_PAID', 'PAID'],
+    it('mentions waiver or loan clearance as the way out when unpaid', async () => {
+      const { service } = build({
+        clearance: { invoiced: true, cleared: false, shortfall: 10_000_00n },
       });
+      const report = await service.evaluate('stu1', 'ses1', 'sem1');
+      expect(gate(report, 'FEE_CLEARANCE').message).toMatch(/waiver or loan clearance/i);
     });
   });
 

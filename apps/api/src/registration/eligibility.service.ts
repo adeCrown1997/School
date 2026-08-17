@@ -1,5 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { LedgerService } from '../finance/ledger.service';
+import { formatMinor } from '../finance/finance.constants';
 import { CalendarService } from './calendar.service';
 import {
   ELIGIBILITY_GATES,
@@ -61,6 +63,7 @@ export class EligibilityService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly calendar: CalendarService,
+    private readonly ledger: LedgerService,
   ) {}
 
   /**
@@ -220,11 +223,12 @@ export class EligibilityService {
    * clearance does (Q-39). The naive `fees_paid` boolean breaks the moment a
    * student is loan-funded, which R16 shows is now mainstream.
    *
-   * The finance module is Phase 3, so the only part decidable today is the
-   * invoice projection. Three outcomes:
+   * The query itself lives in LedgerService so registration, exams and the
+   * clearance module all ask the SAME derived question (INV-16). Three
+   * outcomes:
    *   • no invoice issued for the session → NOT_ENFORCED. There is nothing to
    *     clear; saying "you have paid" would be a claim this code cannot support.
-   *   • invoice settled (or covered by an approved waiver) → pass.
+   *   • invoice settled (payment, approved waiver or loan clearance) → pass.
    *   • outstanding balance → fail, with the amount.
    */
   private async gateFeeClearance(
@@ -232,17 +236,9 @@ export class EligibilityService {
     sessionId: string,
     sessionName: string,
   ): Promise<GateResult> {
-    const invoices = await this.prisma.invoice.findMany({
-      where: {
-        studentRecordId,
-        sessionId,
-        // DRAFT is not yet a demand for money; CANCELLED/VOID are withdrawn.
-        status: { in: ['ISSUED', 'PARTIALLY_PAID', 'PAID'] },
-      },
-      select: { id: true, totalAmount: true, paidAmount: true },
-    });
+    const verdict = await this.ledger.clearance(studentRecordId, sessionId);
 
-    if (invoices.length === 0) {
+    if (!verdict.invoiced) {
       return {
         gate: ELIGIBILITY_GATES.FEE_CLEARANCE,
         passed: false,
@@ -251,29 +247,13 @@ export class EligibilityService {
       };
     }
 
-    const waivers = await this.prisma.waiver.groupBy({
-      by: ['invoiceId'],
-      where: { studentRecordId, status: 'APPROVED', invoiceId: { in: invoices.map((i) => i.id) } },
-      _sum: { amount: true },
-    });
-    const waived = new Map(waivers.map((w) => [w.invoiceId, w._sum.amount ?? 0n]));
-
-    // BigInt throughout: these are minor units (kobo) and a float would start
-    // losing precision well inside the range of real Nigerian school fees.
-    let outstanding = 0n;
-    for (const inv of invoices) {
-      const covered = inv.paidAmount + (waived.get(inv.id) ?? 0n);
-      const shortfall = inv.totalAmount - covered;
-      if (shortfall > 0n) outstanding += shortfall;
-    }
-
-    if (outstanding > 0n) {
+    if (!verdict.cleared) {
       return {
         gate: ELIGIBILITY_GATES.FEE_CLEARANCE,
         passed: false,
         message:
-          `You have an outstanding balance of ${this.formatMinor(outstanding)} for ${sessionName}. ` +
-          'Clear it, or obtain an approved waiver, before registering.',
+          `You have an outstanding balance of ${formatMinor(verdict.shortfall)} for ${sessionName}. ` +
+          'Clear it — or obtain an approved waiver or loan clearance — before registering.',
       };
     }
     return { gate: ELIGIBILITY_GATES.FEE_CLEARANCE, passed: true, message: null };
@@ -338,12 +318,5 @@ export class EligibilityService {
     const days = (to.getTime() - from.getTime()) / 86_400_000;
     if (days < 0) return 1;
     return Math.round(days / 365.25) + 1;
-  }
-
-  /** Minor units → naira, for a message a student can compare to a bank alert. */
-  private formatMinor(minor: bigint): string {
-    const naira = minor / 100n;
-    const kobo = minor % 100n;
-    return `₦${naira.toLocaleString('en-NG')}.${kobo.toString().padStart(2, '0')}`;
   }
 }

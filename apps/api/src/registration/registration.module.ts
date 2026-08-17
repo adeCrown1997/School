@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { AcademicsModule } from '../academics/academics.module';
+import { FinanceModule } from '../finance/finance.module';
 import { CalendarService } from './calendar.service';
 import { CourseListService } from './course-list.service';
 import { EligibilityService } from './eligibility.service';
@@ -30,7 +31,7 @@ import { RegistrationSelfController } from './registration-self.controller';
  * own date columns.
  */
 @Module({
-  imports: [AuthModule, AcademicsModule],
+  imports: [AuthModule, AcademicsModule, FinanceModule],
   providers: [
     CalendarService,
     RegistrationPolicyService,
