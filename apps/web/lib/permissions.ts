@@ -56,6 +56,15 @@ export const PERMISSIONS = {
   REGISTRATION_LOCK: 'registration.lock',
   REGISTRATION_EXCEPTION_REVIEW: 'registration.exception.review',
 
+  // Finance (Phase 4). Split mirrors the SOD pairs of docs/02 §5.4 — the
+  // officer who raises an invoice is not the one who waives it.
+  FINANCE_VIEW: 'finance.view',
+  FINANCE_SCHEDULE_MANAGE: 'finance.schedule.manage',
+  FINANCE_INVOICE_MANAGE: 'finance.invoice.manage',
+  FINANCE_PAYMENT_MANAGE: 'finance.payment.manage',
+  FINANCE_WAIVER_MANAGE: 'finance.waiver.manage',
+  FINANCE_RECONCILE: 'finance.reconcile',
+
   AUDIT_VIEW: 'audit.view',
 
   DASHBOARD_ADMIN_VIEW: 'dashboard.admin.view',
