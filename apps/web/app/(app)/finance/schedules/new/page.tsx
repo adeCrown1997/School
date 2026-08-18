@@ -90,8 +90,7 @@ export default function NewFeeSchedulePage() {
     if (items.length === 0) return setError('Add at least one fee item.');
 
     const payloadItems = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
+    for (const [i, it] of items.entries()) {
       if (!it.feeType.trim()) return setError(`Fee item ${i + 1}: enter a fee type.`);
       if (!it.label.trim()) return setError(`Fee item ${i + 1}: enter a label.`);
       const minor = nairaToMinor(it.amountNaira);

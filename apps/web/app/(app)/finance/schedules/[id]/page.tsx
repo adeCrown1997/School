@@ -132,8 +132,7 @@ export default function FeeScheduleDetailPage() {
     if (!schedule) return;
     setError(null);
     const payload = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
+    for (const [i, it] of items.entries()) {
       if (!it.feeType.trim()) return setError(`Item ${i + 1}: enter a fee type.`);
       if (!it.label.trim()) return setError(`Item ${i + 1}: enter a label.`);
       const minor = nairaToMinor(it.amountNaira);

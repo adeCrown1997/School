@@ -171,20 +171,22 @@ export default function FinanceOverviewPage() {
                 </div>
               ) : (
                 <ul className="mt-5 space-y-4">
-                  {INVOICE_STATUS_ORDER.filter((s) => data.invoices[s]).map((status) => {
+                  {INVOICE_STATUS_ORDER.flatMap((status) => {
                     const g = data.invoices[status];
+                    return g ? [{ status, group: g }] : [];
+                  }).map(({ status, group }) => {
                     return (
                       <BreakdownRow
                         key={status}
                         label={status}
-                        count={g.count}
+                        count={group.count}
                         total={Object.values(data.invoices).reduce((a, b) => a + b.count, 0)}
                         badge={
                           <span className="flex flex-wrap items-center gap-2">
                             <span className="font-medium text-slate-700">
                               {status.replace(/_/g, ' ')}
                             </span>
-                            <span className="text-xs text-slate-400">{formatNaira(g.billed)} billed</span>
+                            <span className="text-xs text-slate-400">{formatNaira(group.billed)} billed</span>
                           </span>
                         }
                         barClass={
