@@ -89,16 +89,16 @@ describe('dashboardScopeFor', () => {
 describe('offeringDepartmentWhere', () => {
   it('returns no filter for an unrestricted actor', () => {
     const scope = dashboardScopeFor(
-      principal([{ permission: 'x.y', scope: { scopeType: 'GLOBAL' } }]),
-      'x.y',
+      principal([{ permission: PERMISSIONS.COURSES_VIEW, scope: { scopeType: 'GLOBAL' } }]),
+      PERMISSIONS.COURSES_VIEW,
     );
     expect(offeringDepartmentWhere(scope)).toEqual({});
   });
 
   it('maps a department scope to the offerings of that department', () => {
     const scope = dashboardScopeFor(
-      principal([{ permission: 'x.y', scope: { scopeType: 'DEPARTMENT', departmentId: 'd1' } }]),
-      'x.y',
+      principal([{ permission: PERMISSIONS.COURSES_VIEW, scope: { scopeType: 'DEPARTMENT', departmentId: 'd1' } }]),
+      PERMISSIONS.COURSES_VIEW,
     );
     expect(offeringDepartmentWhere(scope)).toEqual({
       OR: [{ departmentId: { in: ['d1'] } }],
@@ -106,14 +106,14 @@ describe('offeringDepartmentWhere', () => {
   });
 
   it('FAILS CLOSED with an impossible id when the scope carries no usable ids', () => {
-    const scope = dashboardScopeFor(principal([] as never[]), 'x.y');
+    const scope = dashboardScopeFor(principal([] as never[]), PERMISSIONS.COURSES_VIEW);
     expect(offeringDepartmentWhere(scope)).toEqual({ id: NO_MATCHING_ID });
   });
 
   it('maps a faculty scope through the owning faculty', () => {
     const scope = dashboardScopeFor(
-      principal([{ permission: 'x.y', scope: { scopeType: 'FACULTY', facultyId: 'f1' } }]),
-      'x.y',
+      principal([{ permission: PERMISSIONS.COURSES_VIEW, scope: { scopeType: 'FACULTY', facultyId: 'f1' } }]),
+      PERMISSIONS.COURSES_VIEW,
     );
     expect(offeringDepartmentWhere(scope)).toEqual({
       OR: [{ department: { facultyId: { in: ['f1'] } } }],
