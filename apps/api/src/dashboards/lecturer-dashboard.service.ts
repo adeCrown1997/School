@@ -3,7 +3,12 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthPrincipal } from '../common/auth-principal';
 import { PERMISSIONS } from '../rbac/permissions.catalog';
-import { dashboardScopeFor, idFilterOrNone, offeringDepartmentWhere, type IdFilter } from './dashboards.scope';
+import {
+  dashboardScopeFor,
+  idFilterOrNone,
+  offeringDepartmentWhere,
+  type IdFilter,
+} from './dashboards.scope';
 
 /**
  * Teaching-load dashboards. A lecturer's world is defined by their
@@ -79,10 +84,9 @@ export class LecturerDashboardService {
 
     const sizeByOffering = new Map(classSizes.map((c) => [c.courseOfferingId, c._count]));
     const submittedOfferingIds = new Set(submittedOfferings.map((s) => s.component.offeringId));
-    const draftScoreEntries =
-      scoreStates.find((s) => s.state === 'DRAFT' as const)?._count ?? 0;
+    const draftScoreEntries = scoreStates.find((s) => s.state === ('DRAFT' as const))?._count ?? 0;
     const submittedScoreEntries =
-      scoreStates.find((s) => s.state === 'SUBMITTED' as const)?._count ?? 0;
+      scoreStates.find((s) => s.state === ('SUBMITTED' as const))?._count ?? 0;
 
     let totalEnrolled = 0;
     const courses = allocations.map((a) => {
@@ -248,10 +252,7 @@ export class LecturerDashboardService {
   /** Upcoming academic activity: open and next calendar windows in the actor's
    *  scope (department-level windows, or university-wide ones), plus the next
    *  exams on their offerings. */
-  private async upcomingActivity(
-    actor: AuthPrincipal,
-    offeringFilter: IdFilter,
-  ) {
+  private async upcomingActivity(actor: AuthPrincipal, offeringFilter: IdFilter) {
     const scope = dashboardScopeFor(actor, PERMISSIONS.DASHBOARD_LECTURER_VIEW);
     const now = new Date();
 

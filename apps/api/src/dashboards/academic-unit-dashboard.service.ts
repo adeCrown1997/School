@@ -69,8 +69,8 @@ export class AcademicUnitDashboardService {
     const scope = dashboardScopeFor(actor, PERMISSIONS.DASHBOARD_HOD_VIEW);
     const students = await this.unitStudents(scope);
 
-    const [staffAllocations, offerings, registrationsByStatus, resultsByStatus] =
-      await Promise.all([
+    const [staffAllocations, offerings, registrationsByStatus, resultsByStatus] = await Promise.all(
+      [
         this.departmentStaffLoad(scope),
         this.prisma.courseOffering.groupBy({
           by: ['status'],
@@ -90,7 +90,8 @@ export class AcademicUnitDashboardService {
           _count: true,
           orderBy: { status: 'asc' },
         }),
-      ]);
+      ],
+    );
 
     const pendingRegistrations =
       registrationsByStatus.find((g) => g.status === ('PENDING_APPROVAL' as const))?._count ?? 0;

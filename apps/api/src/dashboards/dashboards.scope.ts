@@ -45,10 +45,7 @@ export interface DashboardScope {
 }
 
 /** Resolve the actor's dashboard scope from a module permission. */
-export function dashboardScopeFor(
-  actor: AuthPrincipal,
-  permission: PermissionKey,
-): DashboardScope {
+export function dashboardScopeFor(actor: AuthPrincipal, permission: PermissionKey): DashboardScope {
   const constraint = scopeConstraintFor(actor, permission);
   const scopeWhere = studentScopeWhere(constraint) as Prisma.StudentRecordWhereInput | undefined;
   return {
@@ -69,9 +66,7 @@ export function dashboardScopeFor(
  * (Registration, Invoice, PaymentIntent, ExamCard, GraduationCandidate, …).
  * When the actor is unrestricted the fragment stays empty.
  */
-export function viaStudentWhere(
-  scope: DashboardScope,
-): Prisma.StudentRecordWhereInput {
+export function viaStudentWhere(scope: DashboardScope): Prisma.StudentRecordWhereInput {
   return scope.studentWhere;
 }
 
@@ -86,9 +81,7 @@ const NO_MATCHING_OFFERING: Prisma.CourseOfferingWhereInput = {
  * no faculty or department, so a scoped actor never sees them — only a GLOBAL
  * holder does (fail closed, mirroring assertDepartmentWithinScope).
  */
-export function offeringDepartmentWhere(
-  scope: DashboardScope,
-): Prisma.CourseOfferingWhereInput {
+export function offeringDepartmentWhere(scope: DashboardScope): Prisma.CourseOfferingWhereInput {
   if (scope.unrestricted) return {};
 
   const or: Prisma.CourseOfferingWhereInput[] = [];

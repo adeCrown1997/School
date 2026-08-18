@@ -73,6 +73,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         icon: GraduationCapIcon,
         studentOnly: true,
       },
+      { href: '/me/results', label: 'My results', icon: FileTextIcon, studentOnly: true },
       {
         href: '/registrations',
         label: 'Registrations',
@@ -106,6 +107,12 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         label: 'Course offerings',
         icon: CalendarIcon,
         anyOf: [PERMISSIONS.OFFERINGS_VIEW, PERMISSIONS.OFFERINGS_MANAGE],
+      },
+      {
+        href: '/results/batches',
+        label: 'Results',
+        icon: FileTextIcon,
+        anyOf: [PERMISSIONS.RESULTS_VIEW],
       },
       {
         href: '/academics/config',

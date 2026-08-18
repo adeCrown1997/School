@@ -36,6 +36,7 @@ export default function OfferingsListPage() {
   const { me } = useSession();
   const canView = can(me?.permissions, PERMISSIONS.OFFERINGS_VIEW);
   const canManage = can(me?.permissions, PERMISSIONS.OFFERINGS_MANAGE);
+  const canScore = can(me?.permissions, PERMISSIONS.RESULTS_SCORE_MANAGE);
 
   const [rows, setRows] = useState<OfferingListItem[]>([]);
   const [sessions, setSessions] = useState<AcademicSession[]>([]);
@@ -342,6 +343,14 @@ export default function OfferingsListPage() {
                     <Link href={`/academics/offerings/${o.id}`} className="text-brand-700 hover:underline">
                       View
                     </Link>
+                    {canScore ? (
+                      <>
+                        <span aria-hidden className="mx-2 text-slate-300">·</span>
+                        <Link href={`/results/scores/${o.id}`} className="text-brand-700 hover:underline">
+                          Scores
+                        </Link>
+                      </>
+                    ) : null}
                   </td>
                 </tr>
               ))}

@@ -21,6 +21,7 @@ export default function OfferingDetailPage() {
   const { me } = useSession();
   const canView = can(me?.permissions, PERMISSIONS.OFFERINGS_VIEW);
   const canManage = can(me?.permissions, PERMISSIONS.OFFERINGS_MANAGE);
+  const canScore = can(me?.permissions, PERMISSIONS.RESULTS_SCORE_MANAGE);
 
   const [offering, setOffering] = useState<OfferingListItem | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -143,6 +144,11 @@ export default function OfferingDetailPage() {
             <Link href="/academics/offerings" className="btn-secondary">
               Back
             </Link>
+            {canScore ? (
+              <Link href={`/results/scores/${id}`} className="btn-secondary">
+                Score entry
+              </Link>
+            ) : null}
             {canManage && !editing ? (
               <button type="button" className="btn-primary" onClick={() => setEditing(true)}>
                 Edit

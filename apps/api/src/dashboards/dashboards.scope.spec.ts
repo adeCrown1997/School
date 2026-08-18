@@ -13,7 +13,9 @@ import {
  * module permission. These tests pin the fail-closed behaviour — a permission
  * held at no usable scope matches NOTHING, never everything.
  */
-function principal(scopes: Array<{ permission: string; scope: AuthPrincipal['scopedPermissions'][number]['scope'] }>): AuthPrincipal {
+function principal(
+  scopes: Array<{ permission: string; scope: AuthPrincipal['scopedPermissions'][number]['scope'] }>,
+): AuthPrincipal {
   return {
     userId: 'u1',
     userType: 'STAFF',
@@ -97,7 +99,12 @@ describe('offeringDepartmentWhere', () => {
 
   it('maps a department scope to the offerings of that department', () => {
     const scope = dashboardScopeFor(
-      principal([{ permission: PERMISSIONS.COURSES_VIEW, scope: { scopeType: 'DEPARTMENT', departmentId: 'd1' } }]),
+      principal([
+        {
+          permission: PERMISSIONS.COURSES_VIEW,
+          scope: { scopeType: 'DEPARTMENT', departmentId: 'd1' },
+        },
+      ]),
       PERMISSIONS.COURSES_VIEW,
     );
     expect(offeringDepartmentWhere(scope)).toEqual({
@@ -112,7 +119,9 @@ describe('offeringDepartmentWhere', () => {
 
   it('maps a faculty scope through the owning faculty', () => {
     const scope = dashboardScopeFor(
-      principal([{ permission: PERMISSIONS.COURSES_VIEW, scope: { scopeType: 'FACULTY', facultyId: 'f1' } }]),
+      principal([
+        { permission: PERMISSIONS.COURSES_VIEW, scope: { scopeType: 'FACULTY', facultyId: 'f1' } },
+      ]),
       PERMISSIONS.COURSES_VIEW,
     );
     expect(offeringDepartmentWhere(scope)).toEqual({

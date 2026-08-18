@@ -78,10 +78,7 @@ export class DashboardsController {
 
   @Get('bursar')
   @RequirePermissions(PERMISSIONS.DASHBOARD_BURSAR_VIEW)
-  async bursar(
-    @CurrentUser() user: AuthPrincipal,
-    @Query('sessionId') sessionId?: string,
-  ) {
+  async bursar(@CurrentUser() user: AuthPrincipal, @Query('sessionId') sessionId?: string) {
     return ok(await this.finance.overview(user, sessionId));
   }
 
@@ -108,14 +105,20 @@ export class DashboardsController {
   @Get('library')
   @RequirePermissions(PERMISSIONS.DASHBOARD_LIBRARY_VIEW)
   async library(@CurrentUser() user: AuthPrincipal) {
-    return ok(await this.operations.clearanceUnitOverview(user, 'DASHBOARD_LIBRARY_VIEW', 'LIBRARY'));
+    return ok(
+      await this.operations.clearanceUnitOverview(user, 'DASHBOARD_LIBRARY_VIEW', 'LIBRARY'),
+    );
   }
 
   @Get('student-affairs')
   @RequirePermissions(PERMISSIONS.DASHBOARD_AFFAIRS_VIEW)
   async studentAffairs(@CurrentUser() user: AuthPrincipal) {
     return ok(
-      await this.operations.clearanceUnitOverview(user, 'DASHBOARD_AFFAIRS_VIEW', 'STUDENT_AFFAIRS'),
+      await this.operations.clearanceUnitOverview(
+        user,
+        'DASHBOARD_AFFAIRS_VIEW',
+        'STUDENT_AFFAIRS',
+      ),
     );
   }
 

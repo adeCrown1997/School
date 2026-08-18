@@ -315,12 +315,7 @@ export const ROLE_DEFS: RoleDef[] = [
     name: 'Accommodation Officer',
     description: 'Signs the HOSTEL step of student clearance (hall dues and allotment settled).',
     scopeKind: ScopeType.GLOBAL,
-    permissions: [
-      ...STUDENT_READONLY,
-      P.CLEARANCE_VIEW,
-      P.CLEARANCE_SIGN,
-      P.DASHBOARD_HOSTEL_VIEW,
-    ],
+    permissions: [...STUDENT_READONLY, P.CLEARANCE_VIEW, P.CLEARANCE_SIGN, P.DASHBOARD_HOSTEL_VIEW],
   },
   {
     key: 'BURSARY_OFFICER',

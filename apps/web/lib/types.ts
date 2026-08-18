@@ -611,6 +611,202 @@ export interface GenerateOfferingsResult {
   semester: { id: string; name: string; sequence: number };
 }
 
+// --- Results (Phase 3) -------------------------------------------------------
+
+export type ResultBatchStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'SENATE_RATIFIED'
+  | 'PUBLISHED'
+  | 'REJECTED';
+
+export type ScoreMark = 'SCORED' | 'ABSENT' | 'WITHHELD' | 'MEDICAL' | 'MALPRACTICE';
+export type ScoreEntryState = 'DRAFT' | 'SUBMITTED';
+
+/** One column of the score grid: an assessment component of the offering. */
+export interface ScoreComponent {
+  id: string;
+  key: string;
+  label: string;
+  weight: string | number;
+  maxScore: string | number;
+  sortOrder: number;
+}
+
+/** One editable cell in the score grid. */
+export interface ScoreCell {
+  componentId: string;
+  registrationLineId: string;
+  score: string | number | null;
+  mark: ScoreMark;
+  state: ScoreEntryState;
+}
+
+export interface ScoreGridRow {
+  registrationLineId: string;
+  matriculationNumber: string;
+  fullName: string;
+  level: number;
+  lineType: RegistrationLineType;
+  cells: ScoreCell[];
+}
+
+/** GET /results/offerings/:id/scores */
+export interface ScoreGrid {
+  offering: {
+    id: string;
+    capacity: number | null;
+    seatsTaken: number;
+    course: { id: string; code: string; title: string; departmentId: string | null };
+    session: { id: string; name: string };
+    semester: { id: string; name: string; sequence: number };
+  };
+  components: ScoreComponent[];
+  rows: ScoreGridRow[];
+}
+
+/** One data row's outcome from a score-sheet upload preview. */
+export interface ScoreSheetRowReport {
+  rowNumber: number;
+  status: 'valid' | 'warning' | 'error';
+  matriculationNumber: string | null;
+  fullName: string | null;
+  errors: string[];
+  warnings: string[];
+  cells: number;
+}
+
+/** POST .../scores/import/preview — and apply (adds `imported`). */
+export interface ScoreSheetSummary {
+  totalRows: number;
+  valid: number;
+  warnings: number;
+  errors: number;
+  entriesPlanned: number;
+  ignoredColumns: string[];
+  rows: ScoreSheetRowReport[];
+  imported?: number;
+}
+
+/** GET /results/batches and the batch returned by the lifecycle endpoints. */
+export interface ResultBatchListItem {
+  id: string;
+  status: ResultBatchStatus;
+  submittedAt: string | null;
+  ratifiedAt: string | null;
+  publishedAt: string | null;
+  publishedById: string | null;
+  publishCosignerId: string | null;
+  rejectReason: string | null;
+  session: { id: string; name: string };
+  offering: {
+    id: string;
+    course: { id: string; code: string; title: string };
+    semester: { id: string; name: string; sequence: number };
+  };
+  gradeScale: { id: string; key: string; name: string };
+  _count: { gradeRecords: number };
+}
+
+/** GET /results/batches/:id — the batch with its chain, scale bands and grades. */
+export interface ResultBatchDetail extends ResultBatchListItem {
+  semester: { id: string; name: string; sequence: number };
+  gradeScale: GradeScale;
+  approvals: Array<{
+    id: string;
+    decision: string;
+    comment: string | null;
+    stage: { key: string; name: string; sequence: number };
+  }>;
+  gradeRecords: Array<{
+    id: string;
+    course: { code: string; title: string };
+    totalScore: string | number | null;
+    grade: string | null;
+    gradePoint: string | number | null;
+    creditUnits: number;
+    mark: ScoreMark;
+    version: number;
+    publishedAt: string | null;
+  }>;
+}
+
+/** GET /results/batches/:id/compute — the preview the approval is made against. */
+export interface BatchComputeRow {
+  registrationLineId: string;
+  matriculationNumber: string;
+  fullName: string;
+  level: number;
+  status: 'OK' | 'MARKED' | 'INCOMPLETE';
+  reason: string | null;
+  totalScore: string | number | null;
+  grade: string | null;
+  gradePoint: string | number | null;
+  mark: ScoreMark | null;
+  passed?: boolean;
+}
+
+export interface BatchComputePreview {
+  offering: string;
+  batchStatus: ResultBatchStatus;
+  graded: number;
+  incomplete: number;
+  marked: number;
+  rows: BatchComputeRow[];
+}
+
+/** GET /results/withholdings */
+export interface WithholdingItem {
+  id: string;
+  reason: string;
+  status: 'ACTIVE' | 'RELEASED';
+  placedAt: string;
+  releasedAt: string | null;
+  studentRecord: { matriculationNumber: string; surname: string; firstName: string };
+  offering: { id: string; course: { code: string; title: string } } | null;
+  session: { id: string; name: string } | null;
+}
+
+/** GET /me/results — the student's OWN published results. */
+export interface OwnResults {
+  grades: Array<{
+    id: string;
+    code: string;
+    title: string;
+    level: number;
+    session: string;
+    sessionId: string;
+    semester: string;
+    semesterSequence: number;
+    creditUnits: number;
+    totalScore: string | number | null;
+    grade: string | null;
+    gradePoint: string | number | null;
+    mark: ScoreMark;
+    isCarryover: boolean;
+    publishedAt: string | null;
+  }>;
+  gpas: Array<{
+    id: string;
+    session: string;
+    semester: string;
+    level: number;
+    unitsRegistered: number;
+    unitsPassed: number;
+    gpa: string | number;
+    cumulativeUnits: number;
+    cgpa: string | number;
+  }>;
+  withholdings: Array<{
+    id: string;
+    reason: string;
+    placedAt: string;
+    course: string | null;
+    session: string | null;
+  }>;
+  withheldCourseCodes: string[];
+}
+
 // --- Finance (Phase 4) -----------------------------------------------------
 // Amounts arrive as DIGIT STRINGS of integer minor units (kobo), §11.5.
 

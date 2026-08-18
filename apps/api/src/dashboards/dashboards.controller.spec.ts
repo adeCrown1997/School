@@ -77,9 +77,7 @@ describe('DashboardsController authorization', () => {
         'viceChancellor',
       ].map((m) => requiredFor(m)?.[0]),
     );
-    const dashboardKeys = Object.values(PERMISSIONS).filter((k) =>
-      k.startsWith('dashboard.'),
-    );
+    const dashboardKeys = Object.values(PERMISSIONS).filter((k) => k.startsWith('dashboard.'));
     for (const key of dashboardKeys) {
       expect(guarded.has(key)).toBe(true);
     }

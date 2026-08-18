@@ -56,6 +56,16 @@ export const PERMISSIONS = {
   REGISTRATION_LOCK: 'registration.lock',
   REGISTRATION_EXCEPTION_REVIEW: 'registration.exception.review',
 
+  // Results (Phase 3). The six-key split IS the separation of duties on
+  // screen: the lecturer who enters scores cannot also approve or publish
+  // them — the buttons simply do not render, and the API enforces it anyway.
+  RESULTS_VIEW: 'results.view',
+  RESULTS_ASSESS_MANAGE: 'results.assess.manage',
+  RESULTS_SCORE_MANAGE: 'results.score.manage',
+  RESULTS_APPROVE: 'results.approve',
+  RESULTS_PUBLISH: 'results.publish',
+  RESULTS_WITHHOLD: 'results.withhold',
+
   // Finance (Phase 4). Split mirrors the SOD pairs of docs/02 §5.4 — the
   // officer who raises an invoice is not the one who waives it.
   FINANCE_VIEW: 'finance.view',

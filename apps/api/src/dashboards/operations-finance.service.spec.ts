@@ -95,7 +95,9 @@ describe('OperationsDashboardService.registryOverview', () => {
         groupBy: jest.fn().mockResolvedValue([{ status: 'APPROVED', _count: 4 }]),
         count: jest.fn().mockResolvedValue(2),
       },
-      transcriptRequest: { groupBy: jest.fn().mockResolvedValue([{ status: 'IN_REVIEW', _count: 2 }]) },
+      transcriptRequest: {
+        groupBy: jest.fn().mockResolvedValue([{ status: 'IN_REVIEW', _count: 2 }]),
+      },
       clearanceRequest: {
         groupBy: jest.fn().mockResolvedValue([{ isComplete: true, _count: 1 }]),
       },
@@ -105,7 +107,9 @@ describe('OperationsDashboardService.registryOverview', () => {
     });
     const svc = new OperationsDashboardService(prisma);
 
-    const out = await svc.registryOverview(principal(PERMISSIONS.DASHBOARD_REGISTRY_VIEW, FACULTY_SCOPE));
+    const out = await svc.registryOverview(
+      principal(PERMISSIONS.DASHBOARD_REGISTRY_VIEW, FACULTY_SCOPE),
+    );
 
     const studentCalls = (prisma.studentRecord.count as jest.Mock).mock.calls;
     expect(studentCalls[0][0].where).toEqual({ OR: [{ facultyId: { in: ['fac-1'] } }] });

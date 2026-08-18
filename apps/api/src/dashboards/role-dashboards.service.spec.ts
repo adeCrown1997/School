@@ -179,11 +179,13 @@ describe('AcademicUnitDashboardService', () => {
         groupBy: jest.fn().mockResolvedValue([{ status: 'PENDING_APPROVAL', _count: 3 }]),
       },
       resultBatch: { groupBy: jest.fn().mockResolvedValue([]) },
-      profileChangeRequest: { groupBy: jest.fn().mockResolvedValue([{ status: 'PENDING', _count: 2 }]) },
+      profileChangeRequest: {
+        groupBy: jest.fn().mockResolvedValue([{ status: 'PENDING', _count: 2 }]),
+      },
       semesterGpa: {
-        findMany: jest.fn().mockResolvedValue([
-          { studentRecordId: 'st-1', cgpa: '1.10', computedAt: new Date() },
-        ]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ studentRecordId: 'st-1', cgpa: '1.10', computedAt: new Date() }]),
         aggregate: jest.fn().mockResolvedValue({ _avg: { cgpa: null } }),
       },
       progressionProposal: { findMany: jest.fn().mockResolvedValue([]) },
@@ -205,7 +207,10 @@ describe('AcademicUnitDashboardService', () => {
 
   it('department overview: staff load counts distinct allocated lecturers', async () => {
     const prisma = prismaMock({
-      studentRecord: { count: jest.fn().mockResolvedValue(0), groupBy: jest.fn().mockResolvedValue([]) },
+      studentRecord: {
+        count: jest.fn().mockResolvedValue(0),
+        groupBy: jest.fn().mockResolvedValue([]),
+      },
       courseAllocation: {
         findMany: jest.fn().mockResolvedValue([
           {

@@ -102,33 +102,45 @@ const REQUIRED_HEADERS: ImportColumn[] = [
 
 export const MAX_IMPORT_ROWS = 5000;
 
-/** Detect + dispatch by extension/mime, then map headers to canonical columns. */
-export async function parseImportFile(
+/** A parsed sheet as a header row + data rows of raw strings. */
+export interface Table {
+  headers: string[];
+  dataRows: string[][];
+}
+
+/**
+ * Detect + dispatch a CSV/XLSX buffer by extension/mime and return the raw
+ * table (header row + data rows of strings). Shared with other import flows
+ * (e.g. score sheets) that need spreadsheet reading WITHOUT this module's
+ * column-mapping rules. Business mapping stays with each caller.
+ */
+export async function parseSpreadsheetTable(
   buffer: Buffer,
   filename: string,
   mimetype: string,
-): Promise<ParseResult> {
+): Promise<Table> {
   const isXlsx =
     /\.xlsx$/i.test(filename) ||
     mimetype.includes('spreadsheetml') ||
     mimetype === 'application/vnd.ms-excel';
   const isCsv = /\.csv$/i.test(filename) || mimetype.includes('csv') || mimetype === 'text/plain';
 
-  const table = isXlsx
+  return isXlsx
     ? await readXlsx(buffer)
     : isCsv
       ? readCsv(buffer)
       : (() => {
           throw new BadRequestException('Unsupported file type — upload a .csv or .xlsx file');
         })();
-
-  return mapTable(table);
 }
 
-/** A parsed sheet as a header row + data rows of raw strings. */
-interface Table {
-  headers: string[];
-  dataRows: string[][];
+/** Detect + dispatch by extension/mime, then map headers to canonical columns. */
+export async function parseImportFile(
+  buffer: Buffer,
+  filename: string,
+  mimetype: string,
+): Promise<ParseResult> {
+  return mapTable(await parseSpreadsheetTable(buffer, filename, mimetype));
 }
 
 function readCsv(buffer: Buffer): Table {

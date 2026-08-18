@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -7,8 +8,12 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { RequirePermissions } from '../auth/decorators';
@@ -19,6 +24,7 @@ import { AssessmentService } from './assessment.service';
 import { ScoreService } from './score.service';
 import { ResultBatchService } from './result-batch.service';
 import { WithholdingService } from './withholding.service';
+import { parseScoreSheet } from './score-import.parse';
 import {
   CreateWithholdingDto,
   DecideResultBatchDto,
@@ -30,6 +36,21 @@ import {
   SetAssessmentComponentsDto,
   SubmitScoresDto,
 } from './dto/results.dto';
+
+/** Uploaded score sheet (multer memory storage — buffer kept in RAM, never disk). */
+interface UploadedSheet {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+  size: number;
+}
+
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
+
+const sheetUploadOptions = {
+  storage: memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+};
 
 /**
  * STAFF result endpoints (docs/03 §10).
@@ -102,6 +123,51 @@ export class ResultsController {
     return this.scores.submitComponents(offeringId, dto, user);
   }
 
+  // --- Score-sheet upload (§10.2) ----------------------------------------------
+
+  /**
+   * Preview a CSV/XLSX score sheet against the offering's assessment structure.
+   * No writes — every invalid cell is reported per row, invalid rows are never
+   * silently dropped. Sheet columns that are not components are listed, not
+   * absorbed.
+   */
+  @Post('offerings/:offeringId/scores/import/preview')
+  @RequirePermissions(PERMISSIONS.RESULTS_SCORE_MANAGE)
+  @UseInterceptors(FileInterceptor('file', sheetUploadOptions))
+  async previewScoreSheet(
+    @Param('offeringId', new ParseUUIDPipe()) offeringId: string,
+    @UploadedFile() file: UploadedSheet | undefined,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    this.assertFile(file);
+    const parsed = await parseScoreSheet(file!.buffer, file!.originalname, file!.mimetype);
+    return this.scores.previewSheet(offeringId, parsed, user);
+  }
+
+  /**
+   * Apply the previewed sheet: writes every valid cell as a DRAFT entry (the
+   * same upsert as autosave — the explicit submit still promotes them).
+   * All-or-nothing while any row is in error.
+   */
+  @Post('offerings/:offeringId/scores/import/apply')
+  @RequirePermissions(PERMISSIONS.RESULTS_SCORE_MANAGE)
+  @UseInterceptors(FileInterceptor('file', sheetUploadOptions))
+  async applyScoreSheet(
+    @Param('offeringId', new ParseUUIDPipe()) offeringId: string,
+    @UploadedFile() file: UploadedSheet | undefined,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    this.assertFile(file);
+    const parsed = await parseScoreSheet(file!.buffer, file!.originalname, file!.mimetype);
+    return this.scores.applySheet(offeringId, parsed, user);
+  }
+
+  private assertFile(file: UploadedSheet | undefined): void {
+    if (!file || !file.buffer?.length) {
+      throw new BadRequestException('Upload a .csv or .xlsx file in the "file" field');
+    }
+  }
+
   // --- Batches & approval (§10.4) --------------------------------------------
 
   @Get('batches')
@@ -124,6 +190,21 @@ export class ResultsController {
   @RequirePermissions(PERMISSIONS.RESULTS_VIEW)
   getBatch(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AuthPrincipal) {
     return this.batches.detail(id, user);
+  }
+
+  /**
+   * The same batch, readable by whoever can ENTER its scores. The score-entry
+   * screen shows the batch's lifecycle position (draft, awaiting approval, …),
+   * and a lecturer holds score.manage but not results.view — the list remains
+   * view-only. Scope-checked on score.manage exactly like the entry endpoints.
+   */
+  @Get('offerings/:offeringId/batch')
+  @RequirePermissions(PERMISSIONS.RESULTS_SCORE_MANAGE)
+  batchForOffering(
+    @Param('offeringId', new ParseUUIDPipe()) offeringId: string,
+    @CurrentUser() user: AuthPrincipal,
+  ) {
+    return this.batches.detailForOffering(offeringId, user);
   }
 
   @Get('batches/:id/compute')

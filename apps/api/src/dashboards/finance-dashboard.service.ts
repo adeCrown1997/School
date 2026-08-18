@@ -78,12 +78,12 @@ export class FinanceDashboardService {
     }
 
     const waived = liveInvoices.length
-      ? (
+      ? ((
           await this.prisma.waiver.aggregate({
             where: { status: 'APPROVED', invoiceId: { in: liveInvoices.map((i) => i.id) } },
             _sum: { amount: true },
           })
-        )._sum.amount ?? 0n
+        )._sum.amount ?? 0n)
       : 0n;
 
     // Payment-verification queue: intents the provider says are settled but the

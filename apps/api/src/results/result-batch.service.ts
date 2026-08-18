@@ -10,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { StructureService } from '../structure/structure.service';
 import { AuthPrincipal } from '../common/auth-principal';
-import { PERMISSIONS } from '../rbac/permissions.catalog';
+import { PERMISSIONS, PermissionKey } from '../rbac/permissions.catalog';
 import {
   assertDepartmentWithinScope,
   scopeConstraintFor,
@@ -85,7 +85,8 @@ export class ResultBatchService {
     );
 
     const existing = await this.prisma.resultBatch.findUnique({ where: { offeringId } });
-    if (existing) return this.detail(existing.id, actor);
+    if (existing)
+      return this.detailWithPermission(existing.id, actor, PERMISSIONS.RESULTS_SCORE_MANAGE);
 
     const scale = await this.prisma.gradeScale.findFirst({
       where: { isDefault: true, isActive: true },
@@ -113,7 +114,19 @@ export class ResultBatchService {
       entityId: batch.id,
       after: { course: offering.course.code, gradeScaleId: scale.id },
     });
-    return this.detail(batch.id, actor);
+    return this.detailWithPermission(batch.id, actor, PERMISSIONS.RESULTS_SCORE_MANAGE);
+  }
+
+  /**
+   * Batch-by-offering for someone who holds score.manage but not results.view —
+   * the score-entry screen needs to show WHERE in the lifecycle the sheet is.
+   * Returns 404 (not an empty success) when the batch does not exist yet: the
+   * UI offers to open it from there.
+   */
+  async detailForOffering(offeringId: string, actor: AuthPrincipal) {
+    const batch = await this.prisma.resultBatch.findUnique({ where: { offeringId } });
+    if (!batch) throw new NotFoundException('No result batch exists for this offering yet');
+    return this.detailWithPermission(batch.id, actor, PERMISSIONS.RESULTS_SCORE_MANAGE);
   }
 
   async list(
@@ -166,6 +179,21 @@ export class ResultBatchService {
   }
 
   async detail(batchId: string, actor: AuthPrincipal) {
+    return this.detailWithPermission(batchId, actor, PERMISSIONS.RESULTS_VIEW);
+  }
+
+  /**
+   * The detail read, scoped by a CALLER-CHOSEN permission. Lifecycle methods
+   * (open/submit/approve/publish) hand back the batch after acting; scoping that
+   * hand-off by results.view would 403 the lecturer who holds results.score.manage
+   * but not results.view — the two views must use whatever authority the caller
+   * just exercised.
+   */
+  private async detailWithPermission(
+    batchId: string,
+    actor: AuthPrincipal,
+    permission: PermissionKey,
+  ) {
     const batch = await this.prisma.resultBatch.findUnique({
       where: { id: batchId },
       include: {
@@ -191,7 +219,7 @@ export class ResultBatchService {
       },
     });
     if (!batch) throw new NotFoundException('Result batch not found');
-    this.assertInBatchScope(batch, actor, PERMISSIONS.RESULTS_VIEW);
+    this.assertInBatchScope(batch, actor, permission);
     return batch;
   }
 
@@ -207,7 +235,11 @@ export class ResultBatchService {
    * silently becomes 0 is precisely the transcript scandal marks management
    * exists to prevent.
    */
-  async compute(batchId: string, actor: AuthPrincipal) {
+  async compute(
+    batchId: string,
+    actor: AuthPrincipal,
+    permission: PermissionKey = PERMISSIONS.RESULTS_VIEW,
+  ) {
     const batch = await this.prisma.resultBatch.findUnique({
       where: { id: batchId },
       include: {
@@ -216,7 +248,7 @@ export class ResultBatchService {
       },
     });
     if (!batch) throw new NotFoundException('Result batch not found');
-    this.assertInBatchScope(batch, actor, PERMISSIONS.RESULTS_VIEW);
+    this.assertInBatchScope(batch, actor, permission);
 
     const components = await this.prisma.assessmentComponent.findMany({
       where: { offeringId: batch.offeringId },
@@ -352,8 +384,9 @@ export class ResultBatchService {
       );
     }
 
-    // Nothing goes for approval incomplete: the preview is the gate.
-    const preview = await this.compute(batchId, actor);
+    // Nothing goes for approval incomplete: the preview is the gate. Scope is
+    // SCORE_MANAGE here because submit is a lecturer action, not a view read.
+    const preview = await this.compute(batchId, actor, PERMISSIONS.RESULTS_SCORE_MANAGE);
     if (preview.incomplete > 0) {
       throw new ConflictException(
         `${preview.incomplete} student(s) have unsubmitted component(s). ` +
@@ -385,7 +418,7 @@ export class ResultBatchService {
         after: { status: 'PENDING_APPROVAL', graded: preview.graded, marked: preview.marked },
       });
     });
-    return this.detail(batchId, actor);
+    return this.detailWithPermission(batchId, actor, PERMISSIONS.RESULTS_SCORE_MANAGE);
   }
 
   // --- approval chain (§10.4) -------------------------------------------------

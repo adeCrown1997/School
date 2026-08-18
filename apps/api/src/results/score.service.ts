@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,6 +13,66 @@ import { AuthPrincipal } from '../common/auth-principal';
 import { PERMISSIONS } from '../rbac/permissions.catalog';
 import { assertDepartmentWithinScope, scopeConstraintFor } from '../rbac/scope.util';
 import { SaveScoresDto, ScoreEntryDto, SubmitScoresDto } from './dto/results.dto';
+import { ScoreSheetParse } from './score-import.parse';
+import {
+  MATRIC_FORMAT_MESSAGE,
+  MATRIC_PATTERN,
+  normalizeMatriculationNumber,
+} from '../students/matriculation';
+
+/**
+ * Sheet cell values: either a number or one of the explicit non-score marks.
+ * Synonyms are tolerated ("A" → ABSENT) so a departmental sheet convention does
+ * not need a lookup table of its own — but the mark the service stores is the
+ * canonical one, the same as manual entry.
+ */
+const MARK_KEYWORDS = new Map<string, 'ABSENT' | 'WITHHELD' | 'MEDICAL' | 'MALPRACTICE'>([
+  ['ABSENT', 'ABSENT'],
+  ['ABS', 'ABSENT'],
+  ['A', 'ABSENT'],
+  ['WITHHELD', 'WITHHELD'],
+  ['WH', 'WITHHELD'],
+  ['MEDICAL', 'MEDICAL'],
+  ['MED', 'MEDICAL'],
+  ['MALPRACTICE', 'MALPRACTICE'],
+  ['MALP', 'MALPRACTICE'],
+  ['MP', 'MALPRACTICE'],
+]);
+
+type ScoreMarkInput = 'SCORED' | 'ABSENT' | 'WITHHELD' | 'MEDICAL' | 'MALPRACTICE';
+
+function normalizeMatricForLookup(raw: string): string {
+  return normalizeMatriculationNumber(raw);
+}
+
+/** One data row's outcome in an upload preview — errors are ALWAYS reported. */
+export interface ScoreRowReport {
+  rowNumber: number;
+  status: 'valid' | 'warning' | 'error';
+  matriculationNumber: string | null;
+  fullName: string | null;
+  errors: string[];
+  warnings: string[];
+  /** Number of valid component cells this row contributes. */
+  cells: number;
+}
+
+/** Aggregate of a score-sheet upload, both phases. */
+export interface ScoreImportSummary {
+  totalRows: number;
+  valid: number;
+  warnings: number;
+  errors: number;
+  /** Valid (component, student) cells an apply would write as DRAFT entries. */
+  entriesPlanned: number;
+  /** Sheet columns that are not components of this offering (not imported). */
+  ignoredColumns: string[];
+  rows: ScoreRowReport[];
+}
+
+function setRowStatus(row: ScoreRowReport): void {
+  row.status = row.errors.length > 0 ? 'error' : row.warnings.length > 0 ? 'warning' : 'valid';
+}
 
 /**
  * Score entry (docs/03 §10.2).
@@ -277,6 +338,261 @@ export class ScoreService {
     });
 
     return { submitted: promoted, components: wanted.map((c) => ({ id: c.id, key: c.key })) };
+  }
+
+  // --- spreadsheet import (§10.2) ----------------------------------------------
+
+  /**
+   * Phase 1 of an upload: map the sheet's cells onto this offering's assessment
+   * structure and report EVERY problem per row. No writes. The same rules as
+   * manual entry apply — blanks are never zeros (the mark must be explicit),
+   * out-of-range scores are hard-rejected, and a submitted cell is untouchable.
+   * Sheet columns that are not components of this offering are IGNORED and
+   * listed so the uploader can correct them — never silently absorbed.
+   */
+  async previewSheet(
+    offeringId: string,
+    parsed: ScoreSheetParse,
+    actor: AuthPrincipal,
+  ): Promise<ScoreImportSummary> {
+    const { report } = await this.resolveSheet(offeringId, parsed, actor);
+    return report;
+  }
+
+  /**
+   * Phase 2: re-resolve the same sheet and write every valid cell as a DRAFT
+   * entry (the same upsert as autosave). All-or-nothing while any row is in
+   * error — a partial import that silently drops rows is exactly the transcript
+   * hazard score entry exists to prevent. Missing cells (warnings) are fine:
+   * they simply stay for manual entry. Draft ≠ submitted.
+   */
+  async applySheet(
+    offeringId: string,
+    parsed: ScoreSheetParse,
+    actor: AuthPrincipal,
+  ): Promise<ScoreImportSummary & { imported: number }> {
+    const offering = await this.loadOffering(offeringId);
+    this.assertInScope(offering, actor);
+    await this.assertNotRatified(offering.id);
+
+    const { report, planned } = await this.resolveSheet(offeringId, parsed, actor);
+
+    if (report.errors > 0) {
+      throw new UnprocessableEntityException({
+        message: 'Import aborted: the sheet still contains invalid cells. No scores were saved.',
+        summary: report,
+      });
+    }
+
+    let imported = 0;
+    await this.prisma.$transaction(async (tx) => {
+      for (const p of planned) {
+        await tx.scoreEntry.upsert({
+          where: {
+            componentId_registrationLineId: {
+              componentId: p.componentId,
+              registrationLineId: p.registrationLineId,
+            },
+          },
+          create: {
+            componentId: p.componentId,
+            registrationLineId: p.registrationLineId,
+            score: p.score,
+            mark: p.mark,
+            state: 'DRAFT',
+            enteredById: actor.userId,
+          },
+          update: { score: p.score, mark: p.mark, state: 'DRAFT', enteredById: actor.userId },
+        });
+        imported++;
+      }
+      await this.audit.recordTx(tx, {
+        actorId: actor.userId,
+        actorLabel: actor.email,
+        action: 'results.scores.import',
+        entityType: 'CourseOffering',
+        entityId: offering.id,
+        after: { course: offering.course.code, cellsWritten: imported, rows: report.totalRows },
+      });
+    });
+
+    return { ...report, imported };
+  }
+
+  /** Structural preconditions for any sheet work against one offering. */
+  private async prepareSheet(offeringId: string, actor: AuthPrincipal) {
+    const offering = await this.loadOffering(offeringId);
+    this.assertInScope(offering, actor);
+    await this.assertNotRatified(offering.id);
+
+    const components = await this.prisma.assessmentComponent.findMany({
+      where: { offeringId },
+      orderBy: [{ sortOrder: 'asc' }, { key: 'asc' }],
+    });
+    if (components.length === 0) {
+      throw new ConflictException(
+        'This offering has no assessment structure yet. Define the components first — the sheet columns must match them.',
+      );
+    }
+    return { offering, components };
+  }
+
+  /**
+   * The shared resolution pass for preview and apply: every row of the parsed
+   * sheet becomes a report entry and (when valid) planned upserts. Kept as ONE
+   * method so the numbers the uploader previews cannot drift from what apply
+   * writes.
+   */
+  private async resolveSheet(offeringId: string, parsed: ScoreSheetParse, actor: AuthPrincipal) {
+    const { components } = await this.prepareSheet(offeringId, actor);
+    const lines = await this.lockedLinesForOffering(offeringId);
+
+    const lineByMatric = new Map(
+      lines.map((l) => [
+        normalizeMatricForLookup(l.registration.studentRecord.matriculationNumber),
+        l,
+      ]),
+    );
+    const componentByKey = new Map(components.map((c) => [c.key, c]));
+
+    // Sheet columns that look like components but are not on this offering.
+    const ignoredColumns = parsed.componentHeaders
+      .filter((h) => !componentByKey.has(h.key))
+      .map((h) => h.header);
+    const mappedColumns = parsed.componentHeaders.filter((h) => componentByKey.has(h.key));
+
+    const submitted = new Set(
+      (
+        await this.prisma.scoreEntry.findMany({
+          where: { component: { offeringId }, state: 'SUBMITTED' },
+          select: { componentId: true, registrationLineId: true },
+        })
+      ).map((e) => `${e.componentId}:${e.registrationLineId}`),
+    );
+
+    const seenMatrics = new Set<string>();
+    const rows: ScoreRowReport[] = [];
+    const planned: Array<{
+      componentId: string;
+      registrationLineId: string;
+      score: Prisma.Decimal | null;
+      mark: ScoreMarkInput;
+    }> = [];
+
+    for (const raw of parsed.rows) {
+      const reportRow: ScoreRowReport = {
+        rowNumber: raw.rowNumber,
+        matriculationNumber: raw.matric || null,
+        fullName: null,
+        status: 'valid',
+        errors: [],
+        warnings: [],
+        cells: 0,
+      };
+      rows.push(reportRow);
+
+      if (!raw.matric) {
+        reportRow.errors.push(
+          `Row is missing a matriculation number (column "${parsed.matricHeader}")`,
+        );
+        setRowStatus(reportRow);
+        continue;
+      }
+      const matric = normalizeMatricForLookup(raw.matric);
+      if (!MATRIC_PATTERN.test(matric)) {
+        reportRow.errors.push(
+          `${raw.matric} is not a matriculation number (${MATRIC_FORMAT_MESSAGE})`,
+        );
+        setRowStatus(reportRow);
+        continue;
+      }
+      const line = lineByMatric.get(matric);
+      if (!line) {
+        reportRow.errors.push(
+          `${raw.matric} has no locked registration on this offering — only registered students can be scored`,
+        );
+        setRowStatus(reportRow);
+        continue;
+      }
+      if (seenMatrics.has(matric)) {
+        reportRow.errors.push(`${raw.matric} appears more than once in the sheet`);
+        setRowStatus(reportRow);
+        continue;
+      }
+      seenMatrics.add(matric);
+      reportRow.fullName = `${line.registration.studentRecord.surname} ${line.registration.studentRecord.firstName}`;
+
+      for (const col of mappedColumns) {
+        const component = componentByKey.get(col.key)!;
+        const rawValue = raw.values.get(col.key);
+        if (rawValue === undefined || rawValue === '') {
+          reportRow.warnings.push(`${component.key}: no cell — left for manual entry`);
+          continue;
+        }
+        if (submitted.has(`${component.id}:${line.id}`)) {
+          reportRow.errors.push(
+            `${component.key}: already submitted — corrections must go through a re-approval`,
+          );
+          continue;
+        }
+        const cell = this.parseSheetCell(component.maxScore, rawValue);
+        if (!cell.ok) {
+          reportRow.errors.push(`${component.key}: ${cell.error}`);
+          continue;
+        }
+        reportRow.cells += 1;
+        planned.push({
+          componentId: component.id,
+          registrationLineId: line.id,
+          score: cell.score,
+          mark: cell.mark,
+        });
+      }
+
+      setRowStatus(reportRow);
+    }
+
+    const valid = rows.filter((r) => r.status === 'valid').length;
+    const warnings = rows.filter((r) => r.status === 'warning').length;
+    const errors = rows.filter((r) => r.status === 'error').length;
+    const report: ScoreImportSummary = {
+      totalRows: rows.length,
+      valid,
+      warnings,
+      errors,
+      entriesPlanned: planned.length,
+      ignoredColumns,
+      rows,
+    };
+    return { report, planned };
+  }
+
+  /** One sheet cell → a validated score or an explicit non-score mark. */
+  private parseSheetCell(
+    maxScore: Prisma.Decimal,
+    rawValue: string,
+  ):
+    | { ok: true; score: Prisma.Decimal | null; mark: ScoreMarkInput }
+    | { ok: false; error: string } {
+    const keyword = MARK_KEYWORDS.get(rawValue.trim().toUpperCase());
+    if (keyword) return { ok: true, score: null, mark: keyword };
+
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) {
+      return {
+        ok: false,
+        error: `"${rawValue}" is neither a number nor one of ${[...MARK_KEYWORDS.keys()].join('/')}`,
+      };
+    }
+    if (value < 0) return { ok: false, error: 'Scores cannot be negative' };
+    const decimal = new Prisma.Decimal(value);
+    if (decimal.greaterThan(maxScore)) {
+      return {
+        ok: false,
+        error: `score ${decimal.toString()} exceeds the component maximum of ${maxScore.toString()}`,
+      };
+    }
+    return { ok: true, score: decimal, mark: 'SCORED' };
   }
 
   // --- validation ------------------------------------------------------------

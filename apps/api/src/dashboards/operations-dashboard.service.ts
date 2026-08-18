@@ -259,7 +259,11 @@ export class OperationsDashboardService {
    * HOSTEL); the lookup fails closed if the unit does not exist yet — an
    * officer then sees an honest zero rather than another unit's queue.
    */
-  async clearanceUnitOverview(actor: AuthPrincipal, permission: keyof typeof PERMISSIONS, unitKey: string) {
+  async clearanceUnitOverview(
+    actor: AuthPrincipal,
+    permission: keyof typeof PERMISSIONS,
+    unitKey: string,
+  ) {
     const scope = dashboardScopeFor(actor, PERMISSIONS[permission]);
 
     const unit = await this.prisma.clearanceUnit.findFirst({
@@ -435,10 +439,11 @@ export class OperationsDashboardService {
       },
       alerts: {
         activeHolds,
-        pendingResultBatches:
-          results
-            .filter((g) => g.status === ('DRAFT' as const) || g.status === ('PENDING_APPROVAL' as const))
-            .reduce((sum, g) => sum + g._count, 0),
+        pendingResultBatches: results
+          .filter(
+            (g) => g.status === ('DRAFT' as const) || g.status === ('PENDING_APPROVAL' as const),
+          )
+          .reduce((sum, g) => sum + g._count, 0),
         pendingRegistrations:
           registrations.find((g) => g.status === ('PENDING_APPROVAL' as const))?._count ?? 0,
       },

@@ -170,6 +170,11 @@ export default function StudentDashboardPage() {
                 <GraduationCapIcon size={16} /> Course registration
               </span>
             </Link>
+            <Link href="/me/results" className="btn-secondary w-full justify-between">
+              <span className="flex items-center gap-2">
+                <FileTextIcon size={16} /> My results
+              </span>
+            </Link>
             <Link href="/me/finance" className="btn-secondary w-full justify-between">
               <span className="flex items-center gap-2">
                 <BanknoteIcon size={16} /> My finance
