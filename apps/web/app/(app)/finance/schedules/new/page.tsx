@@ -12,7 +12,7 @@ import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { can, PERMISSIONS } from '@/lib/permissions';
-import type { AcademicSession, Programme, Semester, UniversityTree } from '@/lib/types';
+import type { AcademicSession, Semester } from '@/lib/types';
 import { PageHeader, AccessNotice } from '@/components/page';
 import { Alert, Field } from '@/components/ui';
 import { PlusIcon, XIcon } from '@/components/icons';
@@ -27,15 +27,34 @@ interface ItemDraft {
 
 const EMPTY_ITEM: ItemDraft = { feeType: '', label: '', amountNaira: '', isMandatory: true };
 
+/** GET /structure/tree returns an ARRAY of universities, each with nested
+ *  faculties → departments → programmes. Only the shape we read is typed. */
+interface TreeUniversity {
+  id: string;
+  name: string;
+  faculties?: Array<{ id: string; name: string; departments?: Array<{
+    id: string;
+    name: string;
+    programmes?: Array<{ id: string; name: string; award?: string }>;
+  }> }>;
+}
+
+const departmentsOf = (universities: TreeUniversity[]) =>
+  universities.flatMap((u) => u.faculties ?? []).flatMap((f) => f.departments ?? []);
+
+const programmesOf = (universities: TreeUniversity[], departmentId: string) =>
+  departmentsOf(universities)
+    .find((d) => d.id === departmentId)
+    ?.programmes ?? [];
+
 export default function NewFeeSchedulePage() {
   const router = useRouter();
   const { me } = useSession();
   const canManage = can(me?.permissions, PERMISSIONS.FINANCE_SCHEDULE_MANAGE);
 
-  const [tree, setTree] = useState<UniversityTree | null>(null);
+  const [universities, setUniversities] = useState<TreeUniversity[]>([]);
   const [sessions, setSessions] = useState<AcademicSession[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
-  const [programmes, setProgrammes] = useState<Programme[]>([]);
   const [departmentId, setDepartmentId] = useState('');
 
   const [name, setName] = useState('');
@@ -51,20 +70,16 @@ export default function NewFeeSchedulePage() {
 
   useEffect(() => {
     if (!canManage) return;
-    api.get<UniversityTree>('/structure/tree').then(setTree).catch(() => {});
+    api
+      .get<TreeUniversity[]>('/structure/tree')
+      .then((rows) => setUniversities(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
     api.get<AcademicSession[]>('/structure/sessions').then(setSessions).catch(() => {});
   }, [canManage]);
 
-  useEffect(() => {
-    if (!canManage || !departmentId) {
-      setProgrammes([]);
-      return;
-    }
-    api
-      .get<Programme[]>(`/structure/programmes?departmentId=${departmentId}`)
-      .then(setProgrammes)
-      .catch(() => setProgrammes([]));
-  }, [canManage, departmentId]);
+  // Programmes are embedded in the tree response — derive them from the
+  // selected department instead of a second request.
+  const programmes = programmesOf(universities, departmentId);
 
   useEffect(() => {
     if (!canManage || !sessionId) {
@@ -175,7 +190,7 @@ export default function NewFeeSchedulePage() {
               }}
             >
               <option value="">Select department…</option>
-              {tree?.faculties.flatMap((f) => f.departments ?? []).map((d) => (
+              {departmentsOf(universities).map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
                 </option>

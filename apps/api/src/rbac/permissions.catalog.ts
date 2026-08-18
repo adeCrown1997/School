@@ -117,6 +117,26 @@ export const PERMISSIONS = {
 
   // Dashboards
   DASHBOARD_ADMIN_VIEW: 'dashboard.admin.view',
+
+  // Role dashboards. One key per tailored dashboard, mirroring the module split:
+  // a role's own dashboard is a read-only projection of what that role may
+  // already see, so granting a key here without the underlying module keys
+  // yields empty widgets, never out-of-scope data (each service re-derives the
+  // caller's scope for every figure it returns).
+  DASHBOARD_LECTURER_VIEW: 'dashboard.lecturer.view',
+  DASHBOARD_ADVISER_VIEW: 'dashboard.adviser.view',
+  DASHBOARD_BURSAR_VIEW: 'dashboard.bursar.view',
+  DASHBOARD_HOD_VIEW: 'dashboard.hod.view',
+  DASHBOARD_FACULTY_VIEW: 'dashboard.faculty.view',
+  DASHBOARD_REGISTRY_VIEW: 'dashboard.registry.view',
+  DASHBOARD_ADMISSIONS_VIEW: 'dashboard.admissions.view',
+  DASHBOARD_EXAMS_VIEW: 'dashboard.exams.view',
+  DASHBOARD_LIBRARY_VIEW: 'dashboard.library.view',
+  DASHBOARD_AFFAIRS_VIEW: 'dashboard.affairs.view',
+  DASHBOARD_HOSTEL_VIEW: 'dashboard.hostel.view',
+  DASHBOARD_PROJECT_VIEW: 'dashboard.project.view',
+  DASHBOARD_REGISTRAR_VIEW: 'dashboard.registrar.view',
+  DASHBOARD_VC_VIEW: 'dashboard.vc.view',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -426,5 +446,75 @@ export const PERMISSION_DEFS: PermissionDef[] = [
     key: PERMISSIONS.DASHBOARD_ADMIN_VIEW,
     category: 'dashboard',
     description: 'View the administrative dashboard',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_LECTURER_VIEW,
+    category: 'dashboard',
+    description: 'View the lecturer dashboard (allocated teaching, score entry status)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_ADVISER_VIEW,
+    category: 'dashboard',
+    description: 'View the academic adviser dashboard (advisees, registrations in scope)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_BURSAR_VIEW,
+    category: 'dashboard',
+    description: 'View the bursary dashboard (revenue, outstanding fees, waivers)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_HOD_VIEW,
+    category: 'dashboard',
+    description: 'View the department dashboard (department statistics and approvals)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_FACULTY_VIEW,
+    category: 'dashboard',
+    description: 'View the faculty dashboard (faculty statistics and approvals)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_REGISTRY_VIEW,
+    category: 'dashboard',
+    description: 'View the registry dashboard (records, change requests, credentials)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_ADMISSIONS_VIEW,
+    category: 'dashboard',
+    description: 'View the admissions dashboard (applications, offers, intake)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_EXAMS_VIEW,
+    category: 'dashboard',
+    description: 'View the examinations dashboard (periods, schedules, cards, attendance)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_LIBRARY_VIEW,
+    category: 'dashboard',
+    description: 'View the library dashboard (library clearance steps)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_AFFAIRS_VIEW,
+    category: 'dashboard',
+    description: 'View the student affairs dashboard (affairs clearance, misconduct, holds)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_HOSTEL_VIEW,
+    category: 'dashboard',
+    description: 'View the accommodation dashboard (hostel clearance steps)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_PROJECT_VIEW,
+    category: 'dashboard',
+    description: 'View the project/SIWES coordinator dashboard (supervision, results pipeline)',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_REGISTRAR_VIEW,
+    category: 'dashboard',
+    description: 'View the university-wide registrar dashboard',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_VC_VIEW,
+    category: 'dashboard',
+    description: 'View the executive overview dashboard',
   },
 ];

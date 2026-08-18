@@ -140,6 +140,7 @@ export const ROLE_DEFS: RoleDef[] = [
       P.TRANSCRIPTS_REVIEW,
       P.AUDIT_VIEW,
       P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_REGISTRY_VIEW,
     ],
   },
   {
@@ -154,6 +155,7 @@ export const ROLE_DEFS: RoleDef[] = [
       P.STUDENTS_IMPORT,
       P.STRUCTURE_VIEW,
       P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_ADMISSIONS_VIEW,
     ],
   },
   {
@@ -165,6 +167,7 @@ export const ROLE_DEFS: RoleDef[] = [
       ...STUDENT_READONLY,
       ...ACADEMIC_READONLY,
       P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_FACULTY_VIEW,
       P.REGISTRATION_VIEW,
       // Faculty collation tier of the result chain (§10.4): view and act at an
       // approval stage in scope.
@@ -202,6 +205,7 @@ export const ROLE_DEFS: RoleDef[] = [
       P.RESULTS_ASSESS_MANAGE,
       P.RESULTS_APPROVE,
       P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_HOD_VIEW,
     ],
   },
   {
@@ -217,6 +221,7 @@ export const ROLE_DEFS: RoleDef[] = [
       ...ACADEMIC_READONLY,
       P.REGISTRATION_VIEW,
       P.REGISTRATION_APPROVE,
+      P.DASHBOARD_ADVISER_VIEW,
     ],
   },
   {
@@ -236,6 +241,7 @@ export const ROLE_DEFS: RoleDef[] = [
       P.RESULTS_VIEW,
       P.RESULTS_APPROVE,
       P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_FACULTY_VIEW,
     ],
   },
   {
@@ -257,6 +263,7 @@ export const ROLE_DEFS: RoleDef[] = [
       P.EXAMS_MANAGE,
       P.EXAMS_CARD_ISSUE,
       P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_EXAMS_VIEW,
     ],
   },
   {
@@ -269,14 +276,26 @@ export const ROLE_DEFS: RoleDef[] = [
     // (§10.2): they see their own sheet, submit it, then stop. They cannot
     // define weightings (INV-11), approve, publish or withhold — each of those
     // is a different hand in the same chain.
-    permissions: [P.STRUCTURE_VIEW, ...ACADEMIC_READONLY, P.RESULTS_SCORE_MANAGE],
+    permissions: [
+      P.STRUCTURE_VIEW,
+      ...ACADEMIC_READONLY,
+      P.RESULTS_SCORE_MANAGE,
+      // Lecturers read their OFFERINGS-scoped allocation, never a student
+      // directory: no students.view is granted here.
+      P.DASHBOARD_LECTURER_VIEW,
+    ],
   },
   {
     key: 'LIBRARY_OFFICER',
     name: 'Library Officer',
     description: 'Signs the LIBRARY step of student clearance (loans returned, fines cleared).',
     scopeKind: ScopeType.GLOBAL,
-    permissions: [...STUDENT_READONLY, P.CLEARANCE_VIEW, P.CLEARANCE_SIGN],
+    permissions: [
+      ...STUDENT_READONLY,
+      P.CLEARANCE_VIEW,
+      P.CLEARANCE_SIGN,
+      P.DASHBOARD_LIBRARY_VIEW,
+    ],
   },
   {
     key: 'STUDENT_AFFAIRS',
@@ -284,7 +303,24 @@ export const ROLE_DEFS: RoleDef[] = [
     description:
       'Signs the STUDENT_AFFAIRS and HOSTEL clearance steps; views holds and disciplinary context.',
     scopeKind: ScopeType.GLOBAL,
-    permissions: [...STUDENT_READONLY, P.CLEARANCE_VIEW, P.CLEARANCE_SIGN],
+    permissions: [
+      ...STUDENT_READONLY,
+      P.CLEARANCE_VIEW,
+      P.CLEARANCE_SIGN,
+      P.DASHBOARD_AFFAIRS_VIEW,
+    ],
+  },
+  {
+    key: 'HOSTEL_OFFICER',
+    name: 'Accommodation Officer',
+    description: 'Signs the HOSTEL step of student clearance (hall dues and allotment settled).',
+    scopeKind: ScopeType.GLOBAL,
+    permissions: [
+      ...STUDENT_READONLY,
+      P.CLEARANCE_VIEW,
+      P.CLEARANCE_SIGN,
+      P.DASHBOARD_HOSTEL_VIEW,
+    ],
   },
   {
     key: 'BURSARY_OFFICER',
@@ -309,6 +345,74 @@ export const ROLE_DEFS: RoleDef[] = [
       P.CLEARANCE_VIEW,
       P.CLEARANCE_SIGN,
       P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_BURSAR_VIEW,
+    ],
+  },
+  {
+    key: 'SIWES_COORDINATOR',
+    name: 'Project/SIWES Coordinator',
+    description:
+      'Supervises industrial-training and project students: reviews registrations and results within their department scope.',
+    scopeKind: ScopeType.DEPARTMENT,
+    // A coordinator's authority is REVIEW: read registrations and results in
+    // scope and act at a configurable approval stage, never score entry,
+    // locking or publishing — same separation-of-duties shape as the adviser.
+    permissions: [
+      ...STUDENT_READONLY,
+      ...ACADEMIC_READONLY,
+      P.REGISTRATION_VIEW,
+      P.REGISTRATION_APPROVE,
+      P.RESULTS_VIEW,
+      P.RESULTS_APPROVE,
+      P.DASHBOARD_PROJECT_VIEW,
+    ],
+  },
+  {
+    key: 'REGISTRAR',
+    name: 'Registrar',
+    description:
+      'Head of the registry: the whole-institution view of admissions, students, results and graduation.',
+    scopeKind: ScopeType.GLOBAL,
+    // Read-and-oversight only. The Registrar signs nothing here: approving is
+    // the academic chain's, posting money the bursary's, entering marks the
+    // lecturers'. Their authority is the institution-wide read.
+    permissions: [
+      ...STUDENT_READONLY,
+      ...ACADEMIC_READONLY,
+      P.REGISTRATION_VIEW,
+      P.RESULTS_VIEW,
+      P.FINANCE_VIEW,
+      P.EXAMS_VIEW,
+      P.CLEARANCE_VIEW,
+      P.GRADUATION_VIEW,
+      P.TRANSCRIPTS_VIEW,
+      P.AUDIT_VIEW,
+      P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_REGISTRAR_VIEW,
+    ],
+  },
+  {
+    key: 'VICE_CHANCELLOR',
+    name: 'Vice Chancellor',
+    description:
+      'The principal officer of the university: the executive overview of students, admissions, academics, finance and graduation.',
+    scopeKind: ScopeType.GLOBAL,
+    // Executive read — every view key, no manage/approve key. A VC who could
+    // also edit records would collapse the separation of duties the whole
+    // chain is built on; decisions are recorded by the office responsible.
+    permissions: [
+      ...STUDENT_READONLY,
+      ...ACADEMIC_READONLY,
+      P.REGISTRATION_VIEW,
+      P.RESULTS_VIEW,
+      P.FINANCE_VIEW,
+      P.EXAMS_VIEW,
+      P.CLEARANCE_VIEW,
+      P.GRADUATION_VIEW,
+      P.TRANSCRIPTS_VIEW,
+      P.AUDIT_VIEW,
+      P.DASHBOARD_ADMIN_VIEW,
+      P.DASHBOARD_VC_VIEW,
     ],
   },
   {
