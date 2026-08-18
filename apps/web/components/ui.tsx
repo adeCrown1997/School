@@ -184,10 +184,22 @@ export function StatusBadge({ state }: { state: string }) {
     CLOSED: 'bg-slate-100 text-slate-600 ring-slate-500/20',
     // Result pipeline + finance states (later-phase surfaces).
     SENATE_RATIFIED: 'bg-violet-50 text-violet-700 ring-violet-600/20',
+    ISSUED: 'bg-brand-50 text-brand-700 ring-brand-600/20',
     PARTIALLY_PAID: 'bg-amber-50 text-amber-700 ring-amber-600/20',
     PAID: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
     VOID: 'bg-slate-100 text-slate-500 ring-slate-500/20',
     RELEASED: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
+    // Payment intents (ledger posting states).
+    CREATED: 'bg-slate-100 text-slate-600 ring-slate-500/20',
+    POSTED_TO_LEDGER: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
+    UNDERPAID: 'bg-amber-50 text-amber-700 ring-amber-600/20',
+    OVERPAID: 'bg-violet-50 text-violet-700 ring-violet-600/20',
+    REVERSED: 'bg-red-50 text-red-700 ring-red-600/20',
+    FAILED: 'bg-red-50 text-red-700 ring-red-600/20',
+    ABANDONED: 'bg-slate-100 text-slate-500 ring-slate-500/20',
+    // Derived fee-clearance verdicts.
+    CLEARED: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
+    NOT_CLEARED: 'bg-red-50 text-red-700 ring-red-600/20',
   };
   const dot: Record<string, string> = {
     ACTIVATED: 'bg-emerald-500',
@@ -205,10 +217,20 @@ export function StatusBadge({ state }: { state: string }) {
     OPEN: 'bg-emerald-500',
     CLOSED: 'bg-slate-400',
     SENATE_RATIFIED: 'bg-violet-500',
+    ISSUED: 'bg-brand-500',
     PARTIALLY_PAID: 'bg-amber-500',
     PAID: 'bg-emerald-500',
     VOID: 'bg-slate-400',
     RELEASED: 'bg-emerald-500',
+    CREATED: 'bg-slate-400',
+    POSTED_TO_LEDGER: 'bg-emerald-500',
+    UNDERPAID: 'bg-amber-500',
+    OVERPAID: 'bg-violet-500',
+    REVERSED: 'bg-red-500',
+    FAILED: 'bg-red-500',
+    ABANDONED: 'bg-slate-400',
+    CLEARED: 'bg-emerald-500',
+    NOT_CLEARED: 'bg-red-500',
   };
   const tone = map[state] ?? 'bg-slate-100 text-slate-600 ring-slate-500/20';
   const dotColor = dot[state] ?? 'bg-slate-400';

@@ -610,3 +610,231 @@ export interface GenerateOfferingsResult {
   skippedInactive: string[];
   semester: { id: string; name: string; sequence: number };
 }
+
+// --- Finance (Phase 4) -----------------------------------------------------
+// Amounts arrive as DIGIT STRINGS of integer minor units (kobo), §11.5.
+
+export type InvoiceStatus = 'DRAFT' | 'ISSUED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED' | 'VOID';
+export type WaiverStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+export type PaymentIntentStatus =
+  | 'CREATED'
+  | 'PENDING'
+  | 'PAID'
+  | 'POSTED_TO_LEDGER'
+  | 'UNDERPAID'
+  | 'OVERPAID'
+  | 'REVERSED'
+  | 'FAILED'
+  | 'ABANDONED';
+
+export interface FeeItem {
+  id: string;
+  feeType: string;
+  label: string;
+  /** Kobo digit string. */
+  amount: string;
+  isMandatory: boolean;
+  sortOrder: number;
+}
+
+/** Row from GET /finance/schedules (bigint columns already stringified). */
+export interface FeeSchedule {
+  id: string;
+  programmeId: string;
+  name: string;
+  sessionId: string | null;
+  semesterId: string | null;
+  clearanceThresholdBps: number;
+  isActive: boolean;
+  invoiceCount: number;
+  createdAt: string;
+  programme: { id: string; code: string; name: string };
+  session: { id: string; name: string } | null;
+  Semester: { id: string; name: string } | null;
+  items: FeeItem[];
+}
+
+export interface InvoiceLine {
+  id: string;
+  description: string;
+  quantity: number;
+  unitAmount: string;
+  amount: string;
+  feeType: string | null;
+}
+
+/** Row from GET /finance/invoices (serialize() of InvoiceService). */
+export interface InvoiceListItem {
+  id: string;
+  invoiceNumber: string;
+  status: InvoiceStatus;
+  issuedAt: string | null;
+  dueAt: string | null;
+  totalAmount: string;
+  paidAmount: string;
+  student: { id: string; matriculationNumber: string; name: string };
+  session: { id: string; name: string } | null;
+  semester: { id: string; name: string; sequence: number } | null;
+  lines: InvoiceLine[];
+  createdAt: string;
+}
+
+/** GET /finance/invoices/:id */
+export interface InvoiceDetail extends InvoiceListItem {
+  waivedAmount: string;
+  outstanding: string;
+  ledger: Array<{
+    id: string;
+    direction: 'DEBIT' | 'CREDIT';
+    source: string;
+    amount: string;
+    description: string;
+    createdAt: string;
+  }>;
+  waivers: Array<{
+    id: string;
+    feeType: string | null;
+    amount: string;
+    reason: string;
+    status: WaiverStatus;
+    decisionNote: string | null;
+    requestedAt: string;
+    decidedAt: string | null;
+  }>;
+}
+
+export interface LedgerEntryView {
+  id: string;
+  direction: 'DEBIT' | 'CREDIT';
+  source: string;
+  amount: string;
+  description: string;
+  invoiceNumber: string | null;
+  createdAt: string;
+}
+
+/** GET /finance/students/:id/ledger — also the shape of GET /me/finance. */
+export interface StudentLedgerView {
+  student: { id: string; matriculationNumber: string; name: string };
+  sums: { debits: string; credits: string; balance: string };
+  entries: LedgerEntryView[];
+  invoices: Array<{
+    id: string;
+    invoiceNumber: string;
+    status: InvoiceStatus;
+    totalAmount: string;
+    paidAmount: string;
+    issuedAt: string | null;
+    dueAt: string | null;
+    session: { id: string; name: string } | null;
+    semester: { id: string; name: string; sequence: number } | null;
+  }>;
+  waivers: Array<{
+    id: string;
+    invoiceNumber: string | null;
+    feeType: string | null;
+    amount: string;
+    reason: string;
+    status: WaiverStatus;
+    createdAt: string;
+  }>;
+}
+
+/** GET /me/finance attaches the clearance verdict per invoiced session. */
+export interface OwnFinanceView extends StudentLedgerView {
+  clearances: Array<{
+    sessionId: string;
+    sessionName: string | null;
+    invoiced: boolean;
+    cleared: boolean;
+    billed: string;
+    covered: string;
+    shortfall: string;
+  }>;
+}
+
+/** GET /finance/overview — the bursary dashboard. */
+export interface FinanceOverview {
+  invoices: Record<string, { count: number; billed: string; paid: string }>;
+  billed: string;
+  received: string;
+  waived: string;
+  outstanding: string;
+  pendingWaivers: { count: number; amount: string };
+  approvedLoanClearances: number;
+}
+
+/** Row from GET /finance/waivers */
+export interface WaiverListItem {
+  id: string;
+  student: { id: string; matriculationNumber: string; name: string };
+  invoiceNumber: string | null;
+  sessionId: string | null;
+  feeType: string | null;
+  amount: string;
+  reason: string;
+  status: WaiverStatus;
+  requestedByName: string | null;
+  approvedByName: string | null;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  appliedAt: string | null;
+  createdAt: string;
+}
+
+/** Row from GET /finance/loans */
+export interface LoanClearanceItem {
+  id: string;
+  student: { id: string; matriculationNumber: string; name: string };
+  session: { id: string; name: string };
+  loanProvider: string;
+  reference: string;
+  amountCovered: string;
+  validFrom: string | null;
+  validTo: string | null;
+  status: 'PENDING' | 'APPROVED';
+  recordedByName: string | null;
+  createdAt: string;
+}
+
+/** Row from GET /finance/payments */
+export interface PaymentIntentItem {
+  id: string;
+  amount: string;
+  currency: string;
+  provider: string | null;
+  providerReference: string | null;
+  status: PaymentIntentStatus;
+  discrepancyAmount: string | null;
+  invoiceNumber: string | null;
+  paidAt: string | null;
+  postedAt: string | null;
+  createdAt: string;
+}
+
+/** Row from GET /finance/reconciliations */
+export interface ReconciliationItem {
+  id: string;
+  provider: string;
+  settlementDate: string;
+  providerTotal: string;
+  ledgerTotal: string;
+  discrepancy: string;
+  matchedCount: number;
+  unmatchedCount: number;
+  status: 'PENDING' | 'APPROVED';
+  reconciledAt: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+/** GET /finance/students/:id/clearance */
+export interface ClearanceView {
+  student: { id: string; matriculationNumber: string; name: string };
+  session: { id: string; name: string };
+  invoiced: boolean;
+  cleared: boolean;
+  billed: string;
+  covered: string;
+  shortfall: string;
+}

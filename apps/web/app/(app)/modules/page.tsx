@@ -55,7 +55,21 @@ const PLANNED_MODULES: ModuleInfo[] = [
     permission: PERMISSIONS.REGISTRATION_VIEW,
   },
   { name: 'Results & Transcripts', description: 'View grades and academic transcripts.', audience: 'student', icon: FileTextIcon },
-  { name: 'Fees & Payments', description: 'Invoices, payments and receipts.', audience: 'all', icon: LandmarkIcon },
+  {
+    name: 'Fees & Payments',
+    description: 'Fee schedules, invoicing, payment posting, waivers and reconciliation.',
+    audience: 'staff',
+    icon: LandmarkIcon,
+    href: '/finance',
+    permission: PERMISSIONS.FINANCE_VIEW,
+  },
+  {
+    name: 'My finance',
+    description: 'Your bills, payments, waivers and session clearance.',
+    audience: 'student',
+    icon: LandmarkIcon,
+    href: '/me/finance',
+  },
   { name: 'Examinations', description: 'Exam dockets, timetables and clearances.', audience: 'student', icon: ClipboardListIcon },
   {
     name: 'Registration review',

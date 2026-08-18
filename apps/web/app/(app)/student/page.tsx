@@ -13,6 +13,7 @@ import type { StudentOverview } from '@/lib/types';
 import { PageHeader, AccessNotice } from '@/components/page';
 import { Alert, Labeled, Spinner, StatusBadge } from '@/components/ui';
 import {
+  BanknoteIcon,
   ClipboardListIcon,
   FileTextIcon,
   GraduationCapIcon,
@@ -167,6 +168,11 @@ export default function StudentDashboardPage() {
             <Link href="/student/registration" className="btn-primary w-full justify-between">
               <span className="flex items-center gap-2">
                 <GraduationCapIcon size={16} /> Course registration
+              </span>
+            </Link>
+            <Link href="/me/finance" className="btn-secondary w-full justify-between">
+              <span className="flex items-center gap-2">
+                <BanknoteIcon size={16} /> My finance
               </span>
             </Link>
             <Link href="/me/profile" className="btn-secondary w-full justify-between">

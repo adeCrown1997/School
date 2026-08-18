@@ -25,6 +25,7 @@ export default function StudentDetailPage() {
   const canStatus = can(me?.permissions, PERMISSIONS.STUDENTS_STATUS);
   const canRegView = can(me?.permissions, PERMISSIONS.REGISTRATION_VIEW);
   const canRegManage = can(me?.permissions, PERMISSIONS.REGISTRATION_MANAGE);
+  const canFinanceView = can(me?.permissions, PERMISSIONS.FINANCE_VIEW);
 
   const [record, setRecord] = useState<StudentRecord | null>(null);
   const [statuses, setStatuses] = useState<StudentStatusRef[]>([]);
@@ -82,6 +83,11 @@ export default function StudentDetailPage() {
             {canRegView ? (
               <Link href={`/registrations/students/${record.id}`} className="btn-primary">
                 {canRegManage ? 'Manage registration' : 'View registration'}
+              </Link>
+            ) : null}
+            {canFinanceView ? (
+              <Link href={`/finance/students/${record.id}`} className="btn-secondary">
+                View ledger
               </Link>
             ) : null}
             <Link href="/students" className="btn-secondary">

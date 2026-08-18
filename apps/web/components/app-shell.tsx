@@ -15,6 +15,7 @@ import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { canAny, PERMISSIONS, type PermissionKey } from '@/lib/permissions';
 import {
+  BanknoteIcon,
   BookOpenIcon,
   BuildingIcon,
   CalendarIcon,
@@ -112,6 +113,18 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         icon: SettingsIcon,
         anyOf: [PERMISSIONS.ACADEMIC_CONFIG_VIEW, PERMISSIONS.ACADEMIC_CONFIG_MANAGE],
       },
+    ],
+  },
+  {
+    title: 'Bursary',
+    items: [
+      {
+        href: '/finance',
+        label: 'Finance',
+        icon: BanknoteIcon,
+        anyOf: [PERMISSIONS.FINANCE_VIEW],
+      },
+      { href: '/me/finance', label: 'My finance', icon: BanknoteIcon, studentOnly: true },
     ],
   },
   {
