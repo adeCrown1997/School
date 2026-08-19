@@ -17,6 +17,7 @@ import { can, PERMISSIONS } from '@/lib/permissions';
 import type { StudentRecord, StudentStatusRef } from '@/lib/types';
 import { PageHeader, AccessNotice } from '@/components/page';
 import { Alert, Labeled, Spinner, StatusBadge } from '@/components/ui';
+import { formatDob } from '@/lib/dates';
 
 export default function StudentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -123,7 +124,7 @@ export default function StudentDetailPage() {
               {record.otherNames ?? '—'}
             </Labeled>
             <Labeled label="Date of birth" protectedField>
-              {record.dateOfBirth?.slice(0, 10)}
+              {formatDob(record.dateOfBirth ?? null)}
             </Labeled>
             <Labeled label="Gender" protectedField>
               {record.gender}

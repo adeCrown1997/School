@@ -29,6 +29,7 @@ import { useRouter } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
 import { Alert, Field } from '@/components/ui';
 import type { ActivationResult } from '@/lib/types';
+import { dobToIso } from '@/lib/dates';
 
 export default function ActivatePage() {
   const router = useRouter();
@@ -44,12 +45,17 @@ export default function ActivatePage() {
     e.preventDefault();
     setError(null);
     setDetails([]);
+    const dobIso = dobToIso(dob);
+    if (!dobIso) {
+      setError('Enter your date of birth as DD/MM/YYYY, for example 14/03/2005.');
+      return;
+    }
     setSubmitting(true);
     try {
       // The response is intentionally generic; we advance regardless of match.
       await api.post<ActivationResult>('/students/activate', {
         matriculationNumber: matric.trim(),
-        dateOfBirth: dob,
+        dateOfBirth: dobIso,
         surname: surname.trim(),
       });
       setDone(true);
@@ -149,10 +155,13 @@ export default function ActivatePage() {
                 />
                 <Field
                   label="Date of birth"
-                  type="date"
                   required
                   value={dob}
                   onChange={(e) => setDob(e.target.value)}
+                  placeholder="DD/MM/YYYY"
+                  hint="Format: DD/MM/YYYY, for example 14/03/2005."
+                  inputMode="numeric"
+                  autoComplete="off"
                 />
                 <Field
                   label="Surname"

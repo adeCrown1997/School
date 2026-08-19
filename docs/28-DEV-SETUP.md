@@ -92,10 +92,10 @@ password after activation is the surname):
 
 | Matriculation number | Surname | Date of birth |
 | -------------------- | ------- | ------------- |
-| `CSC/2024/001`       | Adeyemi | 2005-03-14    |
-| `CSC/2024/002`       | Okoro   | 2004-11-02    |
-| `MTH/2024/003`       | Ibrahim | 2005-07-21    |
-| `EEE/2024/004`       | Balogun | 2003-12-09    |
+| `CSC/2024/001`       | Adeyemi | 14/03/2005    |
+| `CSC/2024/002`       | Okoro   | 02/11/2004    |
+| `MTH/2024/003`       | Ibrahim | 21/07/2005    |
+| `EEE/2024/004`       | Balogun | 09/12/2003    |
 
 ## 6. Run
 

@@ -15,6 +15,7 @@ import type { ChangeRequest, ChangeRequestStatus } from '@/lib/types';
 import { PageHeader, AccessNotice, EmptyState } from '@/components/page';
 import { Alert, Spinner, StatusBadge } from '@/components/ui';
 import { Pagination, type PageMeta } from '@/components/pagination';
+import { formatDob } from '@/lib/dates';
 
 const STATUSES: ChangeRequestStatus[] = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'];
 
@@ -125,6 +126,9 @@ function RequestCard({
 
   const student = request.studentRecord;
   const isPending = request.status === 'PENDING';
+  const isDob = request.fieldKey === 'dateOfBirth';
+  const displayValue = (v: string | null | undefined) =>
+    isDob ? formatDob(v ?? null) : (v ?? '—');
 
   async function decide(decision: 'APPROVE' | 'REJECT') {
     setError(null);
@@ -177,11 +181,11 @@ function RequestCard({
         </div>
         <div>
           <p className="label mb-0.5">Current value</p>
-          <p className="text-slate-700">{request.currentValue ?? '—'}</p>
+          <p className="text-slate-700">{displayValue(request.currentValue)}</p>
         </div>
         <div>
           <p className="label mb-0.5">Requested value</p>
-          <p className="font-medium text-slate-900">{request.requestedValue}</p>
+          <p className="font-medium text-slate-900">{displayValue(request.requestedValue)}</p>
         </div>
       </div>
 

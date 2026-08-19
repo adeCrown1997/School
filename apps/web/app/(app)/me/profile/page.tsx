@@ -14,6 +14,7 @@ import { api, ApiError } from '@/lib/api';
 import type { OwnProfile, StudentProfileContact } from '@/lib/types';
 import { PageHeader, AccessNotice } from '@/components/page';
 import { Alert, Field, Labeled, Spinner, StatusBadge } from '@/components/ui';
+import { formatDob } from '@/lib/dates';
 
 const CONTACT_FIELDS: { key: keyof StudentProfileContact; label: string; type?: string }[] = [
   { key: 'phone', label: 'Phone' },
@@ -109,7 +110,7 @@ export default function MyProfilePage() {
             {data.studentId}
           </Labeled>
           <Labeled label="Date of birth" protectedField>
-            {data.dateOfBirth?.slice(0, 10) ?? '—'}
+            {formatDob(data.dateOfBirth ?? null)}
           </Labeled>
           <Labeled label="Gender" protectedField>
             {data.gender}

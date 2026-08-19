@@ -12,6 +12,7 @@ import { api, ApiError } from '@/lib/api';
 import type { ChangeRequest } from '@/lib/types';
 import { PageHeader, AccessNotice, EmptyState } from '@/components/page';
 import { Alert, Field, Spinner, StatusBadge } from '@/components/ui';
+import { dobToIso, formatDob } from '@/lib/dates';
 
 /** Mirrors the API's STUDENT_CORRECTABLE_FIELDS (profile.dto.ts). */
 const CORRECTABLE_FIELDS: { key: string; label: string }[] = [
@@ -55,10 +56,20 @@ export default function MyChangeRequestsPage() {
     e.preventDefault();
     setSubmitting(true);
     setFormError(null);
+    let value = requestedValue.trim();
+    if (fieldKey === 'dateOfBirth') {
+      const iso = dobToIso(value);
+      if (!iso) {
+        setFormError('Date of birth must be a valid date in DD/MM/YYYY format.');
+        setSubmitting(false);
+        return;
+      }
+      value = iso;
+    }
     try {
       await api.post('/me/change-requests', {
         fieldKey,
-        requestedValue: requestedValue.trim(),
+        requestedValue: value,
         reason: reason.trim(),
       });
       setRequestedValue('');
@@ -86,6 +97,9 @@ export default function MyChangeRequestsPage() {
 
   const labelFor = (key: string) =>
     CORRECTABLE_FIELDS.find((f) => f.key === key)?.label ?? key;
+
+  const valueFor = (key: string, value: string | null | undefined) =>
+    key === 'dateOfBirth' ? formatDob(value ?? null) : (value ?? '—');
 
   return (
     <>
@@ -130,7 +144,12 @@ export default function MyChangeRequestsPage() {
               label="Correct value"
               value={requestedValue}
               onChange={(e) => setRequestedValue(e.target.value)}
-              hint={fieldKey === 'dateOfBirth' ? 'Use YYYY-MM-DD' : undefined}
+              hint={
+                fieldKey === 'dateOfBirth'
+                  ? 'Format: DD/MM/YYYY, for example 14/03/2005.'
+                  : undefined
+              }
+              placeholder={fieldKey === 'dateOfBirth' ? 'DD/MM/YYYY' : undefined}
               required
             />
             <div>
@@ -169,9 +188,9 @@ export default function MyChangeRequestsPage() {
                     <div>
                       <p className="text-sm font-semibold text-slate-800">{labelFor(cr.fieldKey)}</p>
                       <p className="mt-1 text-sm text-slate-600">
-                        <span className="text-slate-400">from</span> {cr.currentValue ?? '—'}{' '}
+                        <span className="text-slate-400">from</span> {valueFor(cr.fieldKey, cr.currentValue)}{' '}
                         <span className="text-slate-400">to</span>{' '}
-                        <span className="font-medium">{cr.requestedValue}</span>
+                        <span className="font-medium">{valueFor(cr.fieldKey, cr.requestedValue)}</span>
                       </p>
                       <p className="mt-1 text-xs text-slate-500">{cr.reason}</p>
                       {cr.reviewNote ? (

@@ -338,7 +338,7 @@ export class StudentImportService {
 
     // Date of birth.
     const dob = this.parseDate(get('dateOfBirth'));
-    if (!dob) errors.push('Invalid or missing date of birth (use YYYY-MM-DD)');
+    if (!dob) errors.push('Invalid or missing date of birth (use DD/MM/YYYY)');
     else if (dob.getTime() > Date.now()) errors.push('Date of birth cannot be in the future');
 
     // Academic hierarchy via codes (each lookup also enforces the hierarchy).

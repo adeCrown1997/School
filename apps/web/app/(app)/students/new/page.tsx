@@ -17,6 +17,7 @@ import { can, PERMISSIONS } from '@/lib/permissions';
 import type { Faculty, Department, Programme, AcademicSession, EntryMode, Gender } from '@/lib/types';
 import { PageHeader, AccessNotice } from '@/components/page';
 import { Alert, Field } from '@/components/ui';
+import { dobToIso } from '@/lib/dates';
 
 const ENTRY_MODES: EntryMode[] = ['UTME', 'DIRECT_ENTRY', 'TRANSFER', 'INTER_UNIVERSITY', 'JUPEB'];
 const GENDERS: Gender[] = ['MALE', 'FEMALE', 'OTHER', 'UNSPECIFIED'];
@@ -91,6 +92,11 @@ export default function NewStudentPage() {
     e.preventDefault();
     setError(null);
     setDetails(null);
+    const dobIso = dobToIso(form.dateOfBirth);
+    if (!dobIso) {
+      setError('Date of birth must be a valid date in DD/MM/YYYY format.');
+      return;
+    }
     if (!window.confirm('Create this official student record?')) return;
     setSubmitting(true);
     try {
@@ -100,7 +106,7 @@ export default function NewStudentPage() {
         surname: form.surname.trim(),
         firstName: form.firstName.trim(),
         otherNames: form.otherNames.trim() || undefined,
-        dateOfBirth: form.dateOfBirth,
+        dateOfBirth: dobIso,
         gender: form.gender,
         facultyId: form.facultyId,
         departmentId: form.departmentId,
@@ -182,9 +188,11 @@ export default function NewStudentPage() {
             />
             <Field
               label="Date of birth"
-              type="date"
               value={form.dateOfBirth}
               onChange={(e) => set('dateOfBirth', e.target.value)}
+              placeholder="DD/MM/YYYY"
+              hint="Format: DD/MM/YYYY, for example 14/03/2005."
+              inputMode="numeric"
               required
             />
             <div>

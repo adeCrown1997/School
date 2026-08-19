@@ -122,7 +122,7 @@ export default function ImportStudentsPage() {
             }}
           />
           <p className="mt-2 text-xs text-slate-500">
-            Columns: matriculationNumber, surname, firstName, otherNames, dateOfBirth (YYYY-MM-DD),
+            Columns: matriculationNumber, surname, firstName, otherNames, dateOfBirth (DD/MM/YYYY),
             gender, facultyCode, departmentCode, programmeCode, admissionSession, entryMode,
             currentLevel. Max 5 MB.
           </p>
